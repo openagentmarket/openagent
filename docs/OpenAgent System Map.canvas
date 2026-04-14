@@ -1,0 +1,41 @@
+{
+	"nodes":[
+		{"id":"overview","type":"text","text":"OpenAgent System Map\n\nOpenAgent turns an Obsidian Canvas selection into a local Codex task, runs that task through a local daemon, and writes the answer back into the graph.\n\nMain product flow:\n1. User opens a repo workspace in an Obsidian vault.\n2. User selects nodes on a canvas.\n3. The Obsidian plugin resolves selection context.\n4. The daemon creates or reuses a task.\n5. Codex Desktop runs the turn.\n6. The plugin streams progress and writes a result node back to the canvas.","x":-1200,"y":-360,"width":500,"height":360,"color":"2"},
+		{"id":"plugin-layer","type":"text","text":"Layer 1: Obsidian plugin\n\nResponsibilities:\n- Read active canvas and selected nodes\n- Resolve text nodes and markdown file nodes into prompt context\n- Manage workspace selection inside the vault\n- Launch or reconnect to the local daemon\n- Render the OpenAgent side panel\n- Sync running/completed node colors\n- Write assistant result nodes and edges back into .canvas files\n\nCurrent implementation is still concentrated in one large main.js.","x":-520,"y":-520,"width":420,"height":320,"color":"4"},
+		{"id":"daemon-layer","type":"text","text":"Layer 2: Local daemon\n\nResponsibilities:\n- Create and reuse tasks from canvas selections\n- Persist task state in ~/.openagent/daemon-state.json\n- Validate Codex Desktop availability\n- Start or resume Codex threads\n- Send turns to the runtime\n- Collect runtime notifications into task history\n- Expose HTTP routes and SSE task streams to the plugin","x":-520,"y":-120,"width":420,"height":320,"color":"3"},
+		{"id":"core-layer","type":"text","text":"Layer 3: Shared core\n\nResponsibilities:\n- Normalize canvas selections\n- Build prompts from selection context\n- Generate stable selection keys and task ids\n- Normalize canvasBinding\n- Create the canonical persisted task shape\n\nThis is the thin shared domain layer that keeps plugin and daemon aligned.","x":-520,"y":280,"width":420,"height":300,"color":"5"},
+		{"id":"contracts","type":"text","text":"Key contracts to keep in mind\n\n1. Task identity is selection-based.\nThe daemon derives stable identity from canvasPath + sorted nodeIds + working directory.\n\n2. The daemon owns canonical task state.\nTask status, threadId, turnId, messages, runtime config, and canvasBinding live there.\n\n3. canvasBinding is the glue between task state and graph state.\nIt tracks canvasPath, rootNodeIds, activeSourceNodeId, activeSourceUpdatedAt, and resultNodesBySourceNodeId.\n\n4. Result sync is timestamp-aware.\nOlder assistant replies should not be written onto a newer follow-up source node.","x":80,"y":-420,"width":500,"height":420,"color":"6"},
+		{"id":"repo-map","type":"text","text":"Repo map\n\nProduction source:\n- apps/obsidian-plugin\n- apps/openagent-daemon\n- packages/core\n\nSupport and tooling:\n- scripts\n- skills/openagent-canvas-bootstrap\n- fixtures/obsidian-smoke\n- docs\n- .github/workflows\n\nUseful reading order:\nREADME -> PROJECT_MAP -> USER_GUIDE -> ARCHITECTURE -> OBSIDIAN_PLUGIN_DEV -> main.js -> server.js -> core index","x":80,"y":80,"width":500,"height":360,"color":"1"},
+		{"id":"local-state","type":"text","text":"Source vs local working state\n\nTreat these as source of truth in git:\n- apps/\n- packages/\n- scripts/\n- fixtures/\n- docs/\n- skills/\n\nDo not confuse these with product source:\n- node_modules/\n- ~/.openagent/\n- runtime files in .obsidian/\n- Workspaces/\n- OpenAgent Smoke/\n\nThis repo often lives inside a real working vault, so local folders can make it look bigger than the tracked product actually is.","x":80,"y":520,"width":500,"height":320,"color":"2"},
+		{"id":"readme","type":"file","file":"README.md","x":760,"y":-620,"width":360,"height":220},
+		{"id":"project-map-doc","type":"file","file":"docs/PROJECT_MAP.md","x":1180,"y":-620,"width":360,"height":220},
+		{"id":"user-guide","type":"file","file":"docs/USER_GUIDE.md","x":760,"y":-320,"width":360,"height":220},
+		{"id":"architecture-doc","type":"file","file":"docs/ARCHITECTURE.md","x":1180,"y":-320,"width":360,"height":220},
+		{"id":"plugin-dev-doc","type":"file","file":"docs/OBSIDIAN_PLUGIN_DEV.md","x":1600,"y":-320,"width":360,"height":220},
+		{"id":"plugin-main","type":"file","file":"apps/obsidian-plugin/main.js","x":760,"y":40,"width":420,"height":260},
+		{"id":"daemon-server","type":"file","file":"apps/openagent-daemon/src/server.js","x":1240,"y":40,"width":420,"height":260},
+		{"id":"core-index","type":"file","file":"packages/core/src/index.js","x":1720,"y":40,"width":420,"height":260},
+		{"id":"scripts-node","type":"file","file":"scripts/openagent-cli.mjs","x":760,"y":400,"width":420,"height":240},
+		{"id":"bootstrap-skill","type":"file","file":"skills/openagent-canvas-bootstrap/SKILL.md","x":1240,"y":400,"width":420,"height":240},
+		{"id":"fixture-canvas","type":"file","file":"fixtures/obsidian-smoke/OpenAgent Smoke/smoke.canvas","x":1720,"y":400,"width":420,"height":240}
+	],
+	"edges":[
+		{"id":"edge-overview-plugin","fromNode":"overview","fromSide":"right","toNode":"plugin-layer","toSide":"left"},
+		{"id":"edge-overview-daemon","fromNode":"overview","fromSide":"right","toNode":"daemon-layer","toSide":"left"},
+		{"id":"edge-overview-core","fromNode":"overview","fromSide":"bottom","toNode":"core-layer","toSide":"top"},
+		{"id":"edge-overview-contracts","fromNode":"overview","fromSide":"right","toNode":"contracts","toSide":"left"},
+		{"id":"edge-overview-repo-map","fromNode":"overview","fromSide":"right","toNode":"repo-map","toSide":"left"},
+		{"id":"edge-repo-map-local-state","fromNode":"repo-map","fromSide":"bottom","toNode":"local-state","toSide":"top"},
+		{"id":"edge-repo-map-readme","fromNode":"repo-map","fromSide":"top","toNode":"readme","toSide":"bottom"},
+		{"id":"edge-repo-map-project-map","fromNode":"repo-map","fromSide":"top","toNode":"project-map-doc","toSide":"bottom"},
+		{"id":"edge-repo-map-user-guide","fromNode":"repo-map","fromSide":"top","toNode":"user-guide","toSide":"bottom"},
+		{"id":"edge-repo-map-architecture","fromNode":"repo-map","fromSide":"right","toNode":"architecture-doc","toSide":"left"},
+		{"id":"edge-repo-map-plugin-dev","fromNode":"repo-map","fromSide":"right","toNode":"plugin-dev-doc","toSide":"left"},
+		{"id":"edge-plugin-file","fromNode":"plugin-layer","fromSide":"right","toNode":"plugin-main","toSide":"left"},
+		{"id":"edge-daemon-file","fromNode":"daemon-layer","fromSide":"right","toNode":"daemon-server","toSide":"left"},
+		{"id":"edge-core-file","fromNode":"core-layer","fromSide":"right","toNode":"core-index","toSide":"left"},
+		{"id":"edge-repo-scripts","fromNode":"repo-map","fromSide":"right","toNode":"scripts-node","toSide":"left"},
+		{"id":"edge-repo-skill","fromNode":"repo-map","fromSide":"right","toNode":"bootstrap-skill","toSide":"left"},
+		{"id":"edge-repo-fixture","fromNode":"repo-map","fromSide":"right","toNode":"fixture-canvas","toSide":"left"}
+	]
+}

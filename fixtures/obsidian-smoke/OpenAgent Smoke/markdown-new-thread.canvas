@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {
+      "id": "markdown-smoke-file",
+      "type": "file",
+      "x": 0,
+      "y": 0,
+      "width": 460,
+      "height": 320,
+      "file": "OpenAgent Smoke/markdown-thread-context.md"
+    }
+  ],
+  "edges": []
+}

@@ -1,0 +1,28 @@
+{
+	"nodes":[
+		{"id":"overview","type":"text","text":"Daemon Runtime Flow\n\nKey questions:\n- What happens when we start the daemon?\n- Is the daemon bound to one fixed repo?\n- When does Codex need to know the cwd/repo?\n\nSummary:\n1. The daemon is a shared local service.\n2. Each workspace points to one real repo or project folder on disk.\n3. Each task is bound to a specific cwd.\n4. Codex threads and turns are started or resumed with the task cwd.","x":-1320,"y":-340,"width":480,"height":320,"color":"2"},
+		{"id":"daemon-start","type":"text","text":"Step 1: Start the daemon\n\nThe Obsidian plugin can:\n- run the OpenAgent: Start daemon command\n- auto-launch it when the daemon is offline\n\nDefault launch command:\ncd <openagent-repo> && pnpm dev:daemon\n\nThis runs apps/openagent-daemon/src/server.js and starts a local HTTP server on 127.0.0.1.","x":-680,"y":-520,"width":440,"height":280,"color":"4"},
+		{"id":"workspace","type":"text","text":"Step 2: Choose a workspace\n\nA workspace in Obsidian stores:\n- repoPath\n- defaultCanvas\n\nMeaning:\n- the daemon is not pre-bound to a repo at boot time\n- the plugin is what determines which repo or project folder the current canvas is working against","x":-680,"y":-120,"width":440,"height":240,"color":"5"},
+		{"id":"selection-task","type":"text","text":"Step 3: Create a task from a canvas selection\n\nThe plugin sends the daemon:\n- canvasPath\n- selected nodeIds\n- cwd = the workspace repoPath\n\nThe daemon creates or reuses a task based on:\n- canvasPath\n- sorted nodeIds\n- cwd\n\nIf there is no cwd yet:\n- a task can still be created\n- status = needs-cwd\n- the first turn cannot run yet","x":-80,"y":-320,"width":460,"height":300,"color":"3"},
+		{"id":"codex-thread","type":"text","text":"Step 4: Run Codex\n\nThis is where the daemon actually calls the Codex runtime:\n- thread/start or thread/resume\n- turn/start\n\nEach request includes:\n- cwd: task.cwd\n- sandbox policy derived from cwd\n\nSo:\n- the daemon can be running without a repo\n- but a task needs a valid cwd before it can run Codex","x":520,"y":-320,"width":440,"height":280,"color":"6"},
+		{"id":"repo-answer","type":"text","text":"Short answer\n\nCodex does not strictly require a git repo.\nIt requires a concrete working directory.\n\nBut in the current OpenAgent product flow:\n- the UX is designed around '1 workspace = 1 repo or project folder'\n- so in practice you almost always choose a repo before running a thread","x":520,"y":80,"width":440,"height":260,"color":"1"},
+		{"id":"state-note","type":"text","text":"Relevant local state\n\n- ~/.openagent/daemon-config.json\n- ~/.openagent/daemon-state.json\n- ~/.openagent/daemon.log\n\nCanonical task state lives in the daemon, not in the plugin UI cache.","x":-80,"y":120,"width":420,"height":180,"color":"2"},
+		{"id":"plugin-main","type":"file","file":"apps/obsidian-plugin/main.js","x":1140,"y":-560,"width":380,"height":220},
+		{"id":"daemon-server","type":"file","file":"apps/openagent-daemon/src/server.js","x":1140,"y":-260,"width":380,"height":220},
+		{"id":"user-guide","type":"file","file":"docs/USER_GUIDE.md","x":1140,"y":40,"width":380,"height":220},
+		{"id":"project-map","type":"file","file":"docs/PROJECT_MAP.md","x":1140,"y":340,"width":380,"height":220}
+	],
+	"edges":[
+		{"id":"edge-overview-start","fromNode":"overview","fromSide":"right","toNode":"daemon-start","toSide":"left"},
+		{"id":"edge-overview-workspace","fromNode":"overview","fromSide":"right","toNode":"workspace","toSide":"left"},
+		{"id":"edge-start-selection","fromNode":"daemon-start","fromSide":"right","toNode":"selection-task","toSide":"left"},
+		{"id":"edge-workspace-selection","fromNode":"workspace","fromSide":"right","toNode":"selection-task","toSide":"left"},
+		{"id":"edge-selection-codex","fromNode":"selection-task","fromSide":"right","toNode":"codex-thread","toSide":"left"},
+		{"id":"edge-codex-answer","fromNode":"codex-thread","fromSide":"bottom","toNode":"repo-answer","toSide":"top"},
+		{"id":"edge-selection-state","fromNode":"selection-task","fromSide":"bottom","toNode":"state-note","toSide":"top"},
+		{"id":"edge-start-plugin-file","fromNode":"daemon-start","fromSide":"right","toNode":"plugin-main","toSide":"left"},
+		{"id":"edge-codex-daemon-file","fromNode":"codex-thread","fromSide":"right","toNode":"daemon-server","toSide":"left"},
+		{"id":"edge-answer-guide","fromNode":"repo-answer","fromSide":"right","toNode":"user-guide","toSide":"left"},
+		{"id":"edge-state-project-map","fromNode":"state-note","fromSide":"right","toNode":"project-map","toSide":"left"}
+	]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "openagent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first Codex orchestration via Obsidian Canvas.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openagentmarket/openagent.git"
+  },
+  "bin": {
+    "openagent": "./scripts/openagent-cli.mjs"
+  },
+  "packageManager": "pnpm@10.32.0",
+  "scripts": {
+    "check": "pnpm run check:syntax && pnpm run check:hygiene",
+    "check:hygiene": "node ./scripts/check-hygiene.mjs",
+    "check:syntax": "node ./scripts/check-syntax.mjs",
+    "dev:daemon": "node ./apps/openagent-daemon/src/server.js",
+    "link:obsidian-plugin": "node ./scripts/link-obsidian-plugin.mjs",
+    "openagent": "node ./scripts/openagent-cli.mjs",
+    "test:obsidian-mixed-new-thread": "node ./scripts/obsidian-mixed-new-thread-smoke.mjs",
+    "test:obsidian-markdown-new-thread": "node ./scripts/obsidian-markdown-new-thread-smoke.mjs",
+    "test:obsidian-follow-up-chain": "node ./scripts/obsidian-follow-up-chain-smoke.mjs",
+    "test:obsidian-node-colors": "node ./scripts/obsidian-node-colors-smoke.mjs",
+    "sync:obsidian-plugin": "node ./scripts/sync-obsidian-plugin.mjs",
+    "test:obsidian-smoke": "node ./scripts/obsidian-smoke.mjs",
+    "test:obsidian-ui-smoke": "node ./scripts/obsidian-ui-smoke.mjs"
+  }
+}

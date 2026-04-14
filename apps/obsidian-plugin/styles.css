@@ -1,0 +1,970 @@
+.openagent-view {
+  --oa-space-1: 6px;
+  --oa-space-2: 10px;
+  --oa-space-3: 14px;
+  --oa-space-4: 18px;
+  --oa-space-5: 24px;
+  --oa-radius-sm: 8px;
+  --oa-radius-md: 8px;
+  --oa-radius-lg: 18px;
+  --oa-border: color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+  --oa-border-soft: color-mix(in srgb, var(--background-modifier-border) 52%, transparent);
+  --oa-surface: color-mix(in srgb, var(--background-secondary) 84%, transparent);
+  --oa-surface-strong: color-mix(in srgb, var(--background-secondary) 94%, var(--background-primary));
+  --oa-surface-hover: color-mix(in srgb, var(--background-modifier-hover) 76%, transparent);
+  --oa-accent-soft: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+
+.openagent-view .oa-panel-scroll,
+.openagent-view .oa-panel-scroll *,
+.openagent-view button,
+.openagent-view .clickable-icon {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.openagent-view input,
+.openagent-view textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.openagent-view .oa-message-text,
+.openagent-view .oa-message-text * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.oa-panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 0 18px;
+  overflow-y: auto;
+}
+
+.oa-panel-scroll > * + * {
+  margin-top: var(--oa-space-3);
+}
+
+.oa-header-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.oa-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.oa-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.oa-brand-text h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.oa-brand-subtitle {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oa-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border-soft);
+  flex: 0 0 auto;
+}
+
+.oa-logo-mark {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.oa-logo-image {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
+}
+
+.oa-header,
+.oa-task-section {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.oa-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 6px 8px 5px;
+  border-bottom: 1px solid var(--oa-border-soft);
+  background: color-mix(in srgb, var(--background-primary) 92%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.oa-messages-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
+.oa-detail-section.is-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.oa-detail-section.is-empty-state .oa-action-row {
+  margin-top: 0;
+}
+
+.oa-message-pagination {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.oa-message-pagination-summary {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.oa-message-pagination-actions {
+  margin-top: 0;
+}
+
+.oa-composer-section {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--oa-border);
+  background: color-mix(in srgb, var(--background-primary) 90%, transparent);
+  backdrop-filter: blur(18px);
+  box-shadow: none;
+}
+
+.oa-action-row.oa-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 0;
+  width: auto;
+}
+
+.oa-action-row.oa-header-actions button {
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.oa-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.oa-action-row button {
+  border-radius: var(--oa-radius-sm);
+  padding: 6px 10px;
+  min-width: 0;
+  min-height: auto;
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border-soft);
+  box-shadow: none;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oa-action-row button:hover:not(:disabled) {
+  background: var(--oa-surface-hover);
+  color: var(--text-normal);
+}
+
+.oa-action-row button:disabled {
+  opacity: 0.45;
+}
+
+.oa-settings-body {
+  min-width: 0;
+}
+
+.oa-settings-page-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.oa-task-list,
+.oa-message-list,
+.oa-workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.oa-task-item,
+.oa-message,
+.oa-workspace-item {
+  border: 1px solid var(--oa-border-soft);
+  border-radius: var(--oa-radius-md);
+  padding: 10px 12px;
+  background: var(--oa-surface);
+  min-width: 0;
+}
+
+.oa-group-context-card {
+  gap: 8px;
+}
+
+.oa-group-context-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.oa-group-context-item {
+  border: 1px solid var(--oa-border-soft);
+  border-radius: var(--oa-radius-sm);
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--background-primary) 58%, transparent);
+}
+
+.oa-group-context-label {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  margin-bottom: 2px;
+}
+
+.oa-group-context-value {
+  color: var(--text-normal);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.oa-task-item {
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.oa-task-item:hover {
+  border-color: color-mix(in srgb, var(--background-modifier-border-hover) 70%, transparent);
+  background: var(--oa-surface-hover);
+}
+
+.oa-task-item.is-active {
+  border-color: color-mix(in srgb, var(--interactive-accent) 30%, var(--oa-border-soft));
+  background: var(--oa-accent-soft);
+}
+
+.oa-task-title,
+.oa-detail-title {
+  font-weight: 600;
+}
+
+.oa-conversation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.oa-task-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.oa-detail-title {
+  font-size: 0.98rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.oa-status-tag {
+  flex: 0 0 auto;
+  max-width: 38%;
+  padding: 2px 7px;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: var(--oa-radius-sm);
+  background: var(--oa-surface);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oa-status-tag.is-running {
+  border-color: color-mix(in srgb, var(--color-yellow) 42%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 14%, transparent);
+  color: var(--text-normal);
+}
+
+.oa-task-meta,
+.oa-message-label,
+.oa-muted {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.oa-task-section > h3,
+.oa-detail-section > h3,
+.oa-settings-section > h3,
+.oa-messages-section > h4 {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.oa-role-user {
+  border-color: color-mix(in srgb, var(--interactive-accent) 28%, var(--oa-border-soft));
+  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-primary));
+}
+
+.oa-role-assistant {
+  background: var(--oa-surface-strong);
+}
+
+.oa-role-system {
+  background: color-mix(in srgb, var(--background-secondary) 68%, transparent);
+}
+
+.oa-message-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.oa-message-text.is-hidden {
+  display: none;
+}
+
+.oa-message-label + .oa-message-text,
+.oa-task-title + .oa-task-meta {
+  margin-top: 4px;
+}
+
+.oa-message-tool {
+  border: 0;
+  padding: 8px 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-chat-message {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-chat-message.oa-role-user,
+.oa-chat-message.oa-role-assistant,
+.oa-chat-message.oa-role-system {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-chat-message.oa-role-user {
+  align-self: flex-end;
+  width: fit-content;
+  max-width: min(78%, 42rem);
+  padding: 10px 12px 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 18%, var(--oa-border-soft));
+  border-radius: var(--oa-radius-md);
+  background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-primary));
+}
+
+.oa-chat-message.oa-message-tool,
+.oa-chat-message.oa-message-tool.oa-role-user,
+.oa-chat-message.oa-message-tool.oa-role-assistant,
+.oa-chat-message.oa-message-tool.oa-role-system {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-message-toggle {
+  appearance: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 0;
+}
+
+.oa-chat-message.oa-message-tool .oa-message-toggle,
+.oa-chat-message.oa-message-tool .oa-message-toggle:hover,
+.oa-chat-message.oa-message-tool .oa-message-toggle:focus,
+.oa-chat-message.oa-message-tool .oa-message-toggle:focus-visible,
+.oa-chat-message.oa-message-tool .oa-message-toggle:active {
+  border: 0 !important;
+  outline: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.oa-message-toggle:hover .oa-message-preview {
+  color: var(--text-normal);
+}
+
+.oa-message-toggle-text {
+  min-width: 0;
+}
+
+.oa-message-preview {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oa-message-toggle-icon {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.oa-message-tool.is-expanded .oa-message-text {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0;
+}
+
+.oa-banner {
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin: 10px 0 0;
+  border: 1px solid var(--oa-border-soft);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.oa-banner-error {
+  background: color-mix(in srgb, var(--color-red) 9%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 24%, transparent);
+}
+
+.oa-banner-warning {
+  background: color-mix(in srgb, var(--color-orange) 9%, transparent);
+  border-color: color-mix(in srgb, var(--color-orange) 24%, transparent);
+}
+
+.oa-workspace-section {
+  margin-top: 16px;
+}
+
+.oa-workspace-modal h2 {
+  margin-bottom: 4px;
+}
+
+.oa-workspace-modal-subtitle {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  margin-bottom: 18px;
+  max-width: 560px;
+}
+
+.oa-workspace-modal .oa-workspace-section > h3,
+.oa-workspace-create-panel > h3 {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.oa-workspace-modal .oa-workspace-list {
+  gap: 8px;
+}
+
+.oa-workspace-modal .oa-workspace-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: color-mix(in srgb, var(--background-primary) 62%, var(--background-secondary));
+}
+
+.oa-workspace-item-main {
+  min-width: 0;
+}
+
+.oa-workspace-open-button {
+  min-width: 70px;
+}
+
+.oa-workspace-create-panel {
+  padding-top: 16px;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
+.oa-settings-section,
+.oa-settings-card {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-workspace-settings-section {
+  background: transparent;
+}
+
+.oa-settings-section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.oa-settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.oa-settings-section-title {
+  margin: 0;
+  color: var(--text-normal);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.oa-settings-inline-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.oa-settings-inline-tab {
+  appearance: none;
+  padding: 5px 9px;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  box-shadow: none;
+}
+
+.oa-settings-inline-tab:hover {
+  color: var(--text-normal);
+  border-color: var(--oa-border);
+}
+
+.oa-settings-inline-tab.is-active {
+  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--interactive-accent) 28%, var(--oa-border-soft));
+}
+
+.oa-workspace-overview {
+  padding: 12px;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-workspace-overview.is-ready {
+  border-color: color-mix(in srgb, var(--interactive-accent) 24%, var(--oa-border-soft));
+}
+
+.oa-workspace-overview.is-empty {
+  border-color: color-mix(in srgb, var(--color-orange) 28%, var(--oa-border-soft));
+}
+
+.oa-workspace-overview-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.oa-workspace-status {
+  align-self: flex-start;
+  padding: 2px 7px;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: var(--oa-radius-sm);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.oa-workspace-overview.is-ready .oa-workspace-status {
+  border-color: color-mix(in srgb, var(--interactive-accent) 26%, transparent);
+  background: transparent;
+  color: var(--text-normal);
+}
+
+.oa-workspace-overview.is-empty .oa-workspace-status {
+  border-color: color-mix(in srgb, var(--color-orange) 28%, transparent);
+  background: transparent;
+  color: var(--text-normal);
+}
+
+.oa-workspace-name {
+  color: var(--text-normal);
+  font-size: 1.02rem;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.oa-workspace-detail-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.oa-workspace-detail {
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
+.oa-workspace-detail-label {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.oa-workspace-detail-value {
+  margin-top: 2px;
+  color: var(--text-normal);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oa-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.oa-settings-subsection {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
+.oa-settings-note {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
+.oa-settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
+.oa-settings-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.oa-settings-label {
+  color: var(--text-faint);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.oa-settings-value {
+  min-width: 0;
+  color: var(--text-normal);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oa-settings-value-path {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.oa-composer-input-shell {
+  position: relative;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: var(--oa-radius-md);
+  background: var(--oa-surface);
+}
+
+.oa-composer-input-shell:focus-within {
+  border-color: color-mix(in srgb, var(--interactive-accent) 36%, var(--oa-border-soft));
+  background: var(--oa-surface-strong);
+}
+
+.oa-composer-input {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 72px 10px 12px;
+  background: transparent;
+  color: var(--text-normal);
+  box-sizing: border-box;
+  line-height: 1.45;
+}
+
+.oa-composer-input::placeholder {
+  color: var(--text-faint);
+}
+
+.oa-composer-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.oa-composer-action-button {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: 8px;
+  box-shadow: none;
+  line-height: 1;
+}
+
+.oa-composer-action-button.is-send {
+  width: 30px;
+  min-width: 30px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.oa-composer-action-button.is-stop {
+  min-width: 52px;
+  padding: 0 10px;
+  border-color: color-mix(in srgb, var(--color-yellow) 42%, var(--oa-border-soft));
+  background: color-mix(in srgb, var(--color-yellow) 58%, var(--oa-surface));
+  color: var(--text-normal);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.oa-composer-action-button:hover:not(:disabled) {
+  color: var(--text-on-accent);
+}
+
+.oa-composer-action-button.is-send:hover:not(:disabled) {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
+.oa-composer-action-button.is-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-yellow) 72%, var(--oa-surface-strong));
+  color: var(--text-normal);
+}
+
+.oa-composer-action-button:disabled {
+  opacity: 0.45;
+}
+
+.openagent-view .oa-settings-section .setting-item {
+  margin-top: 0;
+  padding: 16px 0;
+  border-top: 1px solid var(--oa-border-soft);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.openagent-view .oa-settings-section .setting-item:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.openagent-view .oa-settings-section .setting-item-info {
+  padding-right: 0;
+  width: 100%;
+}
+
+.openagent-view .oa-settings-section .setting-item-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 0;
+  width: 100%;
+}
+
+.openagent-view .oa-settings-section .setting-item-control input,
+.openagent-view .oa-settings-section .setting-item-control select {
+  width: 100%;
+  min-width: 0;
+  border-radius: 11px;
+  background: transparent;
+  border: 1px solid var(--oa-border-soft);
+  box-shadow: none;
+}
+
+.openagent-view .oa-settings-section .setting-item-control button {
+  white-space: nowrap;
+  border-radius: 11px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.openagent-view .oa-settings-section .setting-item-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.openagent-view .oa-settings-section .setting-item-description {
+  color: var(--text-muted);
+  font-size: 0.82em;
+  line-height: 1.45;
+}
+
+.oa-settings-body .oa-action-row button {
+  background: transparent;
+  box-shadow: none;
+}
+
+.oa-settings-body .oa-action-row button:hover:not(:disabled) {
+  background: transparent;
+}
+
+.oa-panel-scroll.is-settings-screen button,
+.oa-panel-scroll.is-settings-screen button:hover:not(:disabled),
+.oa-panel-scroll.is-settings-screen button:focus,
+.oa-panel-scroll.is-settings-screen button:focus-visible,
+.oa-panel-scroll.is-settings-screen button:active {
+  box-shadow: none !important;
+}
+
+.oa-settings-card .oa-task-item,
+.oa-settings-card .oa-workspace-item {
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (min-width: 680px) {
+  .oa-settings-row {
+    grid-template-columns: minmax(88px, 0.8fr) minmax(0, 1.2fr);
+    gap: 10px;
+  }
+
+  .openagent-view .oa-settings-section .setting-item {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+    align-items: center;
+  }
+
+  .openagent-view .oa-settings-section .setting-item-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-self: end;
+    width: min(100%, 220px);
+  }
+}

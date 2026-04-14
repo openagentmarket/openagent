@@ -1,0 +1,14 @@
+{
+  "name": "@openagent/daemon",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "bin": {
+    "openagent-daemon": "./src/server.js"
+  },
+  "scripts": {
+    "start": "node ./src/server.js"
+  }
+}
