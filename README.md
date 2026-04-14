@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/openagent-wordmark.png" alt="OpenAgent logo" width="420" />
+</p>
+
 # OpenAgent
 
 OpenAgent turns Obsidian Canvas into a local workspace for Codex.
