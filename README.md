@@ -12,13 +12,7 @@ Pick nodes on a canvas, turn them into a task, keep nearby context visible, and 
 
 ## Demo Video
 
-<p align="center">
-  <a href="docs/videos/openagent-demo.mp4">
-    <img src="docs/images/openagent-canvas-screenshot.png" alt="OpenAgent demo video preview" width="960" />
-  </a>
-</p>
-
-Click the preview image to open the demo video.
+https://github.com/user-attachments/assets/ac415304-7bc1-4022-b9a4-c6b919734a47
 
 ## How It Works
 
