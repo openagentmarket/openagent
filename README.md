@@ -53,12 +53,6 @@ To update the installed skill and local OpenAgent checkout later, start a new Co
 Use the openagent-canvas-bootstrap skill to update OpenAgent on this machine.
 ```
 
-## Docs
-
-- [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
-- [docs/PROJECT_MAP.md](docs/PROJECT_MAP.md)
-- [docs/OPEN_SOURCE_READINESS.md](docs/OPEN_SOURCE_READINESS.md)
-
 ## License
 
 Released under the [MIT License](LICENSE).
