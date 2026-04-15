@@ -131,37 +131,40 @@ function isPathInsideDirectory(candidatePath, directoryPath) {
     || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
-function formatMarkdownFileLink(file, cwd = "") {
+function resolveMarkdownFilePromptPath(file, cwd = "") {
   const absolutePath = String(file?.absolutePath || "").trim();
   const normalizedCwd = String(cwd || "").trim();
-  let targetPath = "";
-  if (absolutePath && normalizedCwd && isPathInsideDirectory(absolutePath, normalizedCwd)) {
-    targetPath = normalizePromptPath(path.relative(normalizedCwd, absolutePath)) || normalizePromptPath(absolutePath);
+  const relativeFilePath = normalizePromptPath(file?.path || "");
+  if (absolutePath) {
+    return {
+      promptPath: normalizePromptPath(absolutePath),
+      isDirectPath: true,
+    };
   }
 
-  const relativeFilePath = normalizePromptPath(file?.path || "");
-  if (!targetPath && normalizedCwd && relativeFilePath) {
+  if (normalizedCwd && relativeFilePath) {
     const candidateAbsolutePath = path.resolve(normalizedCwd, relativeFilePath);
     if (fs.existsSync(candidateAbsolutePath)) {
-      targetPath = relativeFilePath;
+      return {
+        promptPath: normalizePromptPath(candidateAbsolutePath),
+        isDirectPath: true,
+      };
     }
   }
 
-  if (!targetPath) {
-    return "";
-  }
-
-  const label = String(file?.name || path.basename(absolutePath || relativeFilePath) || file?.path || "markdown-file").trim();
-  return `[${label}](<${targetPath}>)`;
+  return {
+    promptPath: relativeFilePath,
+    isDirectPath: false,
+  };
 }
 
 function buildMarkdownFilePromptBlock(file, index, options = {}) {
-  const markdownLink = formatMarkdownFileLink(file, options.cwd);
-  if (markdownLink) {
-    return `Markdown file ${index + 1}: ${markdownLink}`;
+  const { promptPath, isDirectPath } = resolveMarkdownFilePromptPath(file, options.cwd);
+  if (promptPath && isDirectPath) {
+    return `Markdown file ${index + 1}: ${promptPath}`;
   }
 
-  const filePath = String(file?.path || file?.absolutePath || "").trim();
+  const filePath = promptPath || String(file?.path || file?.absolutePath || "").trim();
   const fileContent = String(file?.content || "");
   if (filePath && fileContent) {
     return `Markdown file ${index + 1}: ${filePath}\n\n\`\`\`md\n${fileContent}\n\`\`\``;

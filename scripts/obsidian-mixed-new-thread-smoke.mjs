@@ -165,6 +165,7 @@ function waitForResult(expectedRequestId, filePath, timeoutMs) {
 function assertSmokePrompt(result) {
   const prompt = String(result?.rawPrompt || "");
   const selectionDebug = String(result?.selectionDebug || "");
+  const expectedPath = `Markdown file 1: ${normalizePromptPath(markdownAbsolutePath)}`;
 
   if (!selectionDebug.includes("text=1") || !selectionDebug.includes("files=1")) {
     throw new Error(`Unexpected selection debug payload: ${selectionDebug || "(empty)"}`);
@@ -174,13 +175,14 @@ function assertSmokePrompt(result) {
     throw new Error("Smoke raw prompt did not include the selected text node.");
   }
 
-  if (shouldUseMarkdownReference()) {
-    const expectedLink = `Markdown file 1: [${path.basename(markdownFileName, ".md")}](<${markdownPathRelative}>)`;
-    if (!prompt.includes(expectedLink)) {
-      throw new Error("Smoke raw prompt did not include the selected markdown file link.");
+  if (!prompt.includes(expectedPath)) {
+    throw new Error("Smoke raw prompt did not include the selected markdown file path.");
+  }
+
+  if (!shouldUseMarkdownReference()) {
+    if (!prompt.includes(expectedMarkdownSnippet)) {
+      throw new Error("Smoke raw prompt did not include the selected markdown file fallback content.");
     }
-  } else if (!prompt.includes(expectedMarkdownSnippet)) {
-    throw new Error("Smoke raw prompt did not include the selected markdown file fallback content.");
   }
 
   if (!prompt.includes(`User request:\n${textNodePrompt}`)) {
@@ -254,6 +256,10 @@ function shouldUseMarkdownReference() {
   const relativePath = path.relative(repoRoot, markdownAbsolutePath);
   return relativePath === ""
     || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+function normalizePromptPath(value) {
+  return String(value || "").trim().replace(/\\/g, "/");
 }
 
 function sleep(ms) {

@@ -46,8 +46,8 @@ assert(
 );
 assert(mixedPrompt.includes("Use the saved Canvas context and continue with the most helpful next step."), "Prompt footer is missing.");
 assert(
-  mixedPrompt.includes("Markdown file 1: [context](<fixtures/obsidian-smoke/OpenAgent Smoke/context.md>)"),
-  "Prompt did not include the markdown node link."
+  mixedPrompt.includes(`Markdown file 1: ${normalizePromptPath(path.join(fixtureVaultPath, "OpenAgent Smoke", "context.md"))}`),
+  "Prompt did not include the markdown node path."
 );
 assert(mixedTask.cwd === repoRoot, `Task cwd mismatch: ${mixedTask.cwd}`);
 assert(mixedTask.title === "OpenAgent smoke test. Capture this canvas selection and create a task.", "Task title mismatch.");
@@ -56,8 +56,8 @@ assert(
   "Mixed new-thread prompt did not include the selected text node."
 );
 assert(
-  mixedNewThreadPrompt.includes("Markdown file 1: [context](<fixtures/obsidian-smoke/OpenAgent Smoke/context.md>)"),
-  "Mixed new-thread prompt did not include the selected markdown file link."
+  mixedNewThreadPrompt.includes(`Markdown file 1: ${normalizePromptPath(path.join(fixtureVaultPath, "OpenAgent Smoke", "context.md"))}`),
+  "Mixed new-thread prompt did not include the selected markdown file path."
 );
 assert(
   mixedNewThreadPrompt.includes("User request:\nOpenAgent smoke test. Capture this canvas selection and create a task."),
@@ -78,8 +78,8 @@ assert(
   "Markdown-only prompt did not include the expected user request."
 );
 assert(
-  markdownNewThreadPrompt.includes("Markdown file 1: [markdown-thread-context](<fixtures/obsidian-smoke/OpenAgent Smoke/markdown-thread-context.md>)"),
-  "Markdown-only prompt did not include the selected markdown file link."
+  markdownNewThreadPrompt.includes(`Markdown file 1: ${normalizePromptPath(path.join(fixtureVaultPath, "OpenAgent Smoke", "markdown-thread-context.md"))}`),
+  "Markdown-only prompt did not include the selected markdown file path."
 );
 assert(groupedSelection.canvasPath === groupedCanvasRelativePath, `Unexpected grouped canvas path: ${groupedSelection.canvasPath}`);
 assert(groupedSelection.nodeIds.length === 1, `Expected 1 selected grouped node, received ${groupedSelection.nodeIds.length}`);
@@ -95,8 +95,8 @@ assert(
   "Grouped markdown context content was not captured."
 );
 assert(
-  groupedNewThreadPrompt.includes("GROUP_DEFAULT_CONTEXT_OK"),
-  "Grouped new-thread prompt did not include the implicit grouped markdown fallback content."
+  groupedNewThreadPrompt.includes(`Markdown file 1: ${normalizePromptPath(generatedGroupFixture.markdownAbsolutePath)}`),
+  "Grouped new-thread prompt did not include the implicit grouped markdown file path."
 );
 assert(
   !groupedNewThreadPrompt.includes("Outside Context"),
@@ -116,8 +116,8 @@ assert(
   "Linked markdown context content was not captured."
 );
 assert(
-  linkedNewThreadPrompt.includes("LINKED_DEFAULT_CONTEXT_OK"),
-  "Linked new-thread prompt did not include the implicitly linked markdown content."
+  linkedNewThreadPrompt.includes(`Markdown file 1: ${normalizePromptPath(generatedLinkedFixture.markdownAbsolutePath)}`),
+  "Linked new-thread prompt did not include the implicitly linked markdown file path."
 );
 assert(
   !linkedNewThreadPrompt.includes("UNLINKED_CONTEXT_SHOULD_NOT_APPEAR"),
@@ -273,6 +273,7 @@ function createGeneratedGroupFixture() {
   return {
     vaultRoot,
     canvasAbsolutePath,
+    markdownAbsolutePath,
   };
 }
 
@@ -341,6 +342,7 @@ function createGeneratedLinkedFixture() {
   return {
     vaultRoot,
     canvasAbsolutePath,
+    markdownAbsolutePath,
   };
 }
 
@@ -593,29 +595,40 @@ function isPathInsideDirectory(candidatePath, directoryPath) {
     || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
-function formatMarkdownFileLink(file, cwd = "") {
+function resolveMarkdownFilePromptPath(file, cwd = "") {
   const absolutePath = String(file?.absolutePath || "").trim();
-  if (!absolutePath) {
-    return "";
+  const normalizedCwd = String(cwd || "").trim();
+  const relativeFilePath = normalizePromptPath(file?.path || "");
+  if (absolutePath) {
+    return {
+      promptPath: normalizePromptPath(absolutePath),
+      isDirectPath: true,
+    };
   }
 
-  const targetPath = cwd && isPathInsideDirectory(absolutePath, cwd)
-    ? normalizePromptPath(path.relative(cwd, absolutePath)) || normalizePromptPath(absolutePath)
-    : "";
-  if (!targetPath) {
-    return "";
+  if (normalizedCwd && relativeFilePath) {
+    const candidateAbsolutePath = path.resolve(normalizedCwd, relativeFilePath);
+    if (fs.existsSync(candidateAbsolutePath)) {
+      return {
+        promptPath: normalizePromptPath(candidateAbsolutePath),
+        isDirectPath: true,
+      };
+    }
   }
 
-  return `[${String(file?.name || path.basename(absolutePath) || "markdown-file").trim()}](<${targetPath}>)`;
+  return {
+    promptPath: relativeFilePath,
+    isDirectPath: false,
+  };
 }
 
 function buildMarkdownFilePromptBlock(file, index, options = {}) {
-  const markdownLink = formatMarkdownFileLink(file, options.cwd);
-  if (markdownLink) {
-    return `Markdown file ${index + 1}: ${markdownLink}`;
+  const { promptPath, isDirectPath } = resolveMarkdownFilePromptPath(file, options.cwd);
+  if (promptPath && isDirectPath) {
+    return `Markdown file ${index + 1}: ${promptPath}`;
   }
 
-  return `Markdown file ${index + 1}: ${String(file?.path || "").trim()}\n\n\`\`\`md\n${String(file?.content || "")}\n\`\`\``;
+  return `Markdown file ${index + 1}: ${String(promptPath || file?.path || file?.absolutePath || "").trim()}\n\n\`\`\`md\n${String(file?.content || "")}\n\`\`\``;
 }
 
 function buildNewThreadPromptFromSelection(selection) {
