@@ -13,10 +13,12 @@ Pick nodes on a canvas, turn them into a task, keep nearby context visible, and 
 ## Demo Video
 
 <p align="center">
-  <video src="docs/videos/openagent-demo.mp4" controls poster="docs/images/openagent-canvas-screenshot.png" width="960"></video>
+  <a href="docs/videos/openagent-demo.mp4">
+    <img src="docs/images/openagent-canvas-screenshot.png" alt="OpenAgent demo video preview" width="960" />
+  </a>
 </p>
 
-If the embedded player does not render here, [open the demo video directly](docs/videos/openagent-demo.mp4).
+Click the preview image to open the demo video.
 
 ## How It Works
 
