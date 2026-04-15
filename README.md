@@ -58,6 +58,17 @@ To update the installed skill and local OpenAgent checkout later, start a new Co
 Use the openagent-canvas-bootstrap skill to update OpenAgent on this machine.
 ```
 
+## Plugin Install Artifacts
+
+For a manual Obsidian plugin install, download these assets from [GitHub Releases](https://github.com/openagentmarket/openagent/releases):
+
+- `main.js`
+- `manifest.json`
+- `styles.css`
+
+Then copy them into `.obsidian/plugins/openagent` in your vault.
+Full steps live in [docs/MANUAL_INSTALL.md](docs/MANUAL_INSTALL.md).
+
 ## License
 
 Released under the [MIT License](LICENSE).

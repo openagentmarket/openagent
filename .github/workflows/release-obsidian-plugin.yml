@@ -1,0 +1,37 @@
+name: Release Obsidian Plugin
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node ./scripts/package-obsidian-plugin-release.mjs "$RELEASE_TAG"
+      - run: |
+          gh release create "$RELEASE_TAG" \
+            dist/obsidian-plugin-release/main.js \
+            dist/obsidian-plugin-release/manifest.json \
+            dist/obsidian-plugin-release/styles.css \
+            dist/obsidian-plugin-release/SHA256SUMS.txt \
+            --title "OpenAgent Obsidian Plugin $RELEASE_TAG" \
+            --notes-file dist/obsidian-plugin-release/release-notes.md \
+            --target "$GITHUB_SHA"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

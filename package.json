@@ -19,6 +19,7 @@
     "dev:daemon": "node ./apps/openagent-daemon/src/server.js",
     "link:obsidian-plugin": "node ./scripts/link-obsidian-plugin.mjs",
     "openagent": "node ./scripts/openagent-cli.mjs",
+    "package:obsidian-plugin-release": "node ./scripts/package-obsidian-plugin-release.mjs",
     "test:obsidian-mixed-new-thread": "node ./scripts/obsidian-mixed-new-thread-smoke.mjs",
     "test:obsidian-markdown-new-thread": "node ./scripts/obsidian-markdown-new-thread-smoke.mjs",
     "test:obsidian-follow-up-chain": "node ./scripts/obsidian-follow-up-chain-smoke.mjs",
