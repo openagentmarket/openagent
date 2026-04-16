@@ -11,26 +11,31 @@ const smokeDir = path.join(vaultPath, smokeDirName);
 const canvasPathRelative = `${smokeDirName}/smoke.canvas`;
 const notePathRelative = `${smokeDirName}/context.md`;
 const commandName = "New thread from selection";
+const daemonConfig = loadDaemonConfig();
 
-syncPlugin();
-writeFixtureFiles();
-restartObsidian();
+await main();
 
-const existingTaskIds = new Set(getSmokeTasks().map((task) => task.taskId));
+async function main() {
+  syncPlugin();
+  writeFixtureFiles();
+  restartObsidian();
 
-openSmokeCanvas();
-focusCanvasArea();
-runOpenAgentCommand(commandName);
+  const existingTaskIds = new Set((await getSmokeTasks()).map((task) => task.taskId));
 
-const task = waitForNewSmokeTask(existingTaskIds, 45_000);
-console.log(`Obsidian UI smoke test passed for ${task.taskId}`);
-console.log(JSON.stringify({
-  taskId: task.taskId,
-  status: task.status,
-  updatedAt: task.updatedAt,
-  sourceRef: task.sourceRef,
-  nodeIds: task.selectionContext?.nodeIds || [],
-}, null, 2));
+  openSmokeCanvas();
+  focusCanvasArea();
+  runOpenAgentCommand(commandName);
+
+  const task = await waitForNewSmokeTask(existingTaskIds, 45_000);
+  console.log(`Obsidian UI smoke test passed for ${task.taskId}`);
+  console.log(JSON.stringify({
+    taskId: task.taskId,
+    status: task.status,
+    updatedAt: task.updatedAt,
+    sourceRef: task.sourceRef,
+    nodeIds: task.selectionContext?.nodeIds || [],
+  }, null, 2));
+}
 
 function syncPlugin() {
   execFileSync(process.execPath, [path.join(repoRoot, "scripts", "sync-obsidian-plugin.mjs")], {
@@ -131,10 +136,10 @@ end tell`,
   ], { stdio: "ignore" });
 }
 
-function waitForNewSmokeTask(existingTaskIds, timeoutMs) {
+async function waitForNewSmokeTask(existingTaskIds, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const task = getSmokeTasks().find((candidate) => !existingTaskIds.has(candidate.taskId));
+    const task = (await getSmokeTasks()).find((candidate) => !existingTaskIds.has(candidate.taskId));
     if (task) {
       return task;
     }
@@ -145,30 +150,23 @@ function waitForNewSmokeTask(existingTaskIds, timeoutMs) {
   throw new Error("Timed out waiting for a new UI smoke task.");
 }
 
-function getSmokeTasks() {
-  const configPath = path.join(os.homedir(), ".openagent", "daemon-config.json");
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const response = execFileSync(process.execPath, [
-    "-e",
-    [
-      "const fs = require('fs');",
-      `const c = ${JSON.stringify(config)};`,
-      "fetch(`http://${c.host}:${c.port}/tasks`, { headers: { 'x-openagent-token': c.token } })",
-      "  .then((response) => response.json())",
-      "  .then((payload) => {",
-      `    const tasks = (payload.tasks || []).filter((task) => task.sourceRef === ${JSON.stringify(canvasPathRelative)});`,
-      "    console.log(JSON.stringify(tasks));",
-      "  })",
-      "  .catch((error) => {",
-      "    console.error(error);",
-      "    process.exit(1);",
-      "  });",
-    ].join("\n"),
-  ], {
-    encoding: "utf8",
+async function getSmokeTasks() {
+  const response = await fetch(`http://${daemonConfig.host}:${daemonConfig.port}/tasks`, {
+    headers: {
+      "x-openagent-token": daemonConfig.token,
+    },
   });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch smoke tasks (${response.status}).`);
+  }
 
-  return JSON.parse(response);
+  const payload = await response.json();
+  return (payload.tasks || []).filter((task) => task.sourceRef === canvasPathRelative);
+}
+
+function loadDaemonConfig() {
+  const configPath = path.join(os.homedir(), ".openagent", "daemon-config.json");
+  return JSON.parse(fs.readFileSync(configPath, "utf8"));
 }
 
 function waitForObsidianProcess(shouldExist, timeoutMs) {

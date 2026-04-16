@@ -696,7 +696,13 @@ class WorkspacePickerModal extends Modal {
   }
 
   onOpen() {
+    const loadPromise = this.plugin.ensureWorkspaceSummariesLoaded();
     this.render();
+    void loadPromise.finally(() => {
+      if (this.contentEl?.isConnected) {
+        this.render();
+      }
+    });
   }
 
   render() {
@@ -710,10 +716,16 @@ class WorkspacePickerModal extends Modal {
     });
 
     const existing = this.plugin.listWorkspaceSummaries();
+    const isLoadingWorkspaces = this.plugin.isWorkspaceSummariesLoading();
     const existingSection = contentEl.createDiv({ cls: "oa-workspace-section" });
     existingSection.createEl("h3", { text: "Existing workspaces" });
 
-    if (existing.length === 0) {
+    if (existing.length === 0 && isLoadingWorkspaces) {
+      existingSection.createDiv({
+        cls: "oa-muted",
+        text: "Loading workspaces...",
+      });
+    } else if (existing.length === 0) {
       existingSection.createDiv({
         cls: "oa-muted",
         text: "No workspace yet. Create one from a repo path below.",
@@ -2262,9 +2274,12 @@ class OpenAgentView extends ItemView {
       return;
     }
 
+    const isLoading = preview.status === "loading";
     const textCount = Array.isArray(preview.textBlocks) ? preview.textBlocks.length : 0;
     const fileCount = Array.isArray(preview.markdownFiles) ? preview.markdownFiles.length : 0;
-    const summaryText = fileCount > 0
+    const summaryText = isLoading
+      ? `Loading group context from ${preview.canvasPath}...`
+      : fileCount > 0
       ? `${fileCount} markdown file${fileCount === 1 ? "" : "s"} in ${preview.canvasPath}`
       : `No markdown file context found in ${preview.canvasPath}`;
 
@@ -2276,7 +2291,7 @@ class OpenAgentView extends ItemView {
     });
     cardHeader.createDiv({
       cls: "oa-status-tag",
-      text: "Preview",
+      text: isLoading ? "Loading" : "Preview",
     });
 
     card.createDiv({
@@ -2295,6 +2310,12 @@ class OpenAgentView extends ItemView {
         attr: file?.path ? { title: file.path } : {},
       });
     });
+    if (isLoading && fileCount === 0) {
+      list.createDiv({
+        cls: "oa-muted",
+        text: "Resolving markdown files in this group...",
+      });
+    }
     if ((preview.markdownFiles || []).length > 4) {
       list.createDiv({
         cls: "oa-muted",
@@ -2334,6 +2355,7 @@ class OpenAgentView extends ItemView {
     const runningTasks = this.plugin.getRunningTasks();
     const activeTask = this.plugin.getActiveTask();
     const selectedGroupContextPreview = this.plugin.getSelectedGroupContextPreview();
+    const workspaceSummariesLoading = this.plugin.isWorkspaceSummariesLoading();
     const activeTaskId = activeTask?.taskId ? String(activeTask.taskId) : "";
     const didSwitchActiveTask = Boolean(activeTaskId && activeTaskId !== this.lastRenderedActiveTaskId);
     const shouldAutoScrollToLatestUserMessage = this.shouldAutoScrollToLatestUserMessage(activeTask, {
@@ -2375,7 +2397,7 @@ class OpenAgentView extends ItemView {
     brandText.createDiv({
       cls: "oa-brand-subtitle",
       text: isSettingsScreen
-        ? (activeWorkspace?.name || "Workspace and conversation controls")
+        ? (activeWorkspace?.name || (workspaceSummariesLoading ? "Loading workspace..." : "Workspace and conversation controls"))
         : (activeTask?.cwd ? compactPathLabel(activeTask.cwd) : (activeWorkspace?.name || "Canvas-linked conversations")),
     });
     const actions = headerTop.createDiv({ cls: "oa-action-row oa-header-actions" });
@@ -2418,7 +2440,7 @@ class OpenAgentView extends ItemView {
       workspaceRow.createDiv({ cls: "oa-settings-label", text: "Current workspace" });
       workspaceRow.createDiv({
         cls: "oa-settings-value oa-settings-value-path",
-        text: activeWorkspace?.repoPath || "No workspace selected",
+        text: activeWorkspace?.repoPath || (workspaceSummariesLoading ? "Loading workspace..." : "No workspace selected"),
         attr: activeWorkspace?.repoPath ? { title: activeWorkspace.repoPath } : {},
       });
 
@@ -2882,6 +2904,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.devSmokeRunPromise = null;
     this.lastProcessedSmokeRequestId = "";
     this.logoDataUrl = "";
+    this.logoLoadPromise = null;
     this.debugEvents = [];
     this.resultNodeSyncStateByTaskId = normalizeResultNodeSyncState(
       savedSyncState.resultNodeSyncStateByTaskId
@@ -2902,6 +2925,15 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.runningTaskRefreshInFlight = new Set();
     this.composerFocused = false;
     this.pendingViewRefresh = false;
+    this.workspaceSummaryCacheByConfigPath = new Map();
+    this.workspaceSummariesLoadPromise = null;
+    this.workspaceSummariesLoaded = false;
+    this.selectedGroupContextPreviewState = {
+      key: "",
+      preview: null,
+      loading: false,
+    };
+    this.selectedGroupContextPreviewLoadPromise = null;
 
     this.registerView(VIEW_TYPE, (leaf) => new OpenAgentView(leaf, this));
     this.addSettingTab(new OpenAgentSettingTab(this.app, this));
@@ -2914,13 +2946,24 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.registerInterval(window.setInterval(() => {
       void this.refreshRunningTasks();
     }, RUNNING_TASK_REFRESH_POLL_MS));
+    this.registerEvent(this.app.vault.on("create", (file) => {
+      this.handleWorkspaceConfigMutation(file);
+      this.handleSelectedGroupContextDependencyMutation(file);
+      this.handleCanvasFileMutation(file);
+    }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
+      this.handleWorkspaceConfigMutation(file);
+      this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.handleWorkspaceConfigMutation(file);
+      this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
     }));
-    this.registerEvent(this.app.vault.on("rename", (file) => {
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.handleWorkspaceConfigMutation(file, oldPath);
+      this.handleSelectedGroupContextDependencyMutation(file, oldPath);
       this.handleCanvasFileMutation(file);
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
@@ -2929,6 +2972,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         this.getCanvasSnapshotSync(activeCanvasPath);
       }
       this.syncActiveTaskToCanvasContext();
+      void this.refreshSelectedGroupContextPreview();
       this.requestViewRefresh();
     }));
     const initialCanvasPath = this.getActiveCanvasPath();
@@ -2990,6 +3034,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.ensurePanelVisibleOnStartup();
     });
+    void this.ensureWorkspaceSummariesLoaded();
+    void this.ensurePluginLogoDataUrlLoaded();
     void this.refreshTasks().catch(() => {});
   }
 
@@ -3034,8 +3080,16 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   getPluginLogoDataUrl() {
+    return this.logoDataUrl;
+  }
+
+  async ensurePluginLogoDataUrlLoaded() {
     if (this.logoDataUrl) {
       return this.logoDataUrl;
+    }
+
+    if (this.logoLoadPromise) {
+      return this.logoLoadPromise;
     }
 
     const logoPath = this.getPluginLogoPath();
@@ -3043,9 +3097,18 @@ module.exports = class OpenAgentPlugin extends Plugin {
       return "";
     }
 
-    const encoded = fs.readFileSync(logoPath).toString("base64");
-    this.logoDataUrl = `data:image/png;base64,${encoded}`;
-    return this.logoDataUrl;
+    this.logoLoadPromise = fs.promises.readFile(logoPath)
+      .then((buffer) => {
+        this.logoDataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
+        this.requestViewRefresh();
+        return this.logoDataUrl;
+      })
+      .catch(() => "")
+      .finally(() => {
+        this.logoLoadPromise = null;
+      });
+
+    return this.logoLoadPromise;
   }
 
   getPluginLogoPath() {
@@ -3137,15 +3200,46 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return this.app.vault.getFiles().filter((file) => basenameVaultPath(file.path) === "workspace.json");
   }
 
-  readWorkspaceConfigSummary(file) {
-    try {
-      const vaultBasePath = this.getVaultBasePath();
-      if (!vaultBasePath) {
-        return null;
-      }
+  isWorkspaceSummariesLoading() {
+    return Boolean(this.workspaceSummariesLoadPromise);
+  }
 
-      const absolutePath = path.join(vaultBasePath, ...String(file.path || "").split("/"));
-      const parsed = JSON.parse(fs.readFileSync(absolutePath, "utf8"));
+  getWorkspaceSummarySignature(workspace) {
+    if (!workspace) {
+      return "";
+    }
+
+    return [
+      workspace.configPath,
+      workspace.folderPath,
+      workspace.name,
+      workspace.repoPath,
+      workspace.defaultCanvas,
+    ].join("|");
+  }
+
+  haveWorkspaceSummariesChanged(nextMap) {
+    const previousMap = this.workspaceSummaryCacheByConfigPath;
+    if (previousMap.size !== nextMap.size) {
+      return true;
+    }
+
+    for (const [configPath, nextSummary] of nextMap.entries()) {
+      if (this.getWorkspaceSummarySignature(previousMap.get(configPath)) !== this.getWorkspaceSummarySignature(nextSummary)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async readWorkspaceConfigSummary(file) {
+    if (!(file instanceof TFile) || basenameVaultPath(file.path) !== "workspace.json") {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(await this.app.vault.cachedRead(file));
       const repoPath = normalizeRepoPath(parsed?.repoPath);
       if (!repoPath) {
         return null;
@@ -3163,10 +3257,51 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
   }
 
+  async ensureWorkspaceSummariesLoaded(options = {}) {
+    const force = options.force === true;
+    if (!force && this.workspaceSummariesLoaded) {
+      return this.listWorkspaceSummaries();
+    }
+
+    if (!force && this.workspaceSummariesLoadPromise) {
+      return this.workspaceSummariesLoadPromise;
+    }
+
+    this.workspaceSummariesLoadPromise = (async () => {
+      const nextMap = new Map();
+      const summaries = await Promise.all(this.getWorkspaceConfigFiles().map((file) => this.readWorkspaceConfigSummary(file)));
+      summaries.filter(Boolean).forEach((summary) => {
+        nextMap.set(summary.configPath, summary);
+      });
+
+      const changed = this.haveWorkspaceSummariesChanged(nextMap);
+      this.workspaceSummaryCacheByConfigPath = nextMap;
+      this.workspaceSummariesLoaded = true;
+      if (changed || force) {
+        this.requestViewRefresh();
+      }
+
+      return this.listWorkspaceSummaries();
+    })().finally(() => {
+      this.workspaceSummariesLoadPromise = null;
+    });
+
+    return this.workspaceSummariesLoadPromise;
+  }
+
+  handleWorkspaceConfigMutation(file, oldPath = "") {
+    const nextPath = file instanceof TFile ? String(file.path || "").trim() : "";
+    const normalizedOldPath = String(oldPath || "").trim();
+    if (basenameVaultPath(nextPath) !== "workspace.json" && basenameVaultPath(normalizedOldPath) !== "workspace.json") {
+      return;
+    }
+
+    this.workspaceSummariesLoaded = false;
+    void this.ensureWorkspaceSummariesLoaded({ force: true });
+  }
+
   listWorkspaceSummaries() {
-    return this.getWorkspaceConfigFiles()
-      .map((file) => this.readWorkspaceConfigSummary(file))
-      .filter(Boolean)
+    return Array.from(this.workspaceSummaryCacheByConfigPath.values())
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
@@ -3252,6 +3387,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       throw new Error(`Repo path does not exist: ${repoPath}`);
     }
 
+    await this.ensureWorkspaceSummariesLoaded();
     const existing = this.listWorkspaceSummaries().find((workspace) => workspace.repoPath === repoPath);
     if (existing) {
       await this.openWorkspace(existing);
@@ -3290,6 +3426,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       this.buildDefaultWorkspaceCanvas(workspace.name, workspace.repoPath)
     );
 
+    await this.ensureWorkspaceSummariesLoaded({ force: true });
     await this.openWorkspace(workspace);
     new Notice(`Created workspace: ${workspace.name}`);
     return workspace;
@@ -4693,6 +4830,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     this.syncActiveTaskToCanvasContext();
+    void this.refreshSelectedGroupContextPreview();
     this.scheduleCanvasNodeHighlightSync(canvasPath);
     this.requestViewRefresh();
   }
@@ -4980,11 +5118,15 @@ module.exports = class OpenAgentPlugin extends Plugin {
         return;
       }
 
+      const liveNodeDataById = this.resolver.extractLiveSelectedNodeDataById(view, nodeIds);
+      const selectedNode = nodeIds.length === 1 ? liveNodeDataById.get(String(nodeIds[0] || "")) || null : null;
       const nextSnapshot = {
         canvasPath: file.path,
         nodeIds: Array.from(new Set(nodeIds.map((nodeId) => String(nodeId)).filter(Boolean))).sort(),
         selectionIdentity: this.buildTaskSelectionIdentityFromNodeIds(file.path, nodeIds),
         capturedAt: Date.now(),
+        selectedNodeType: String(selectedNode?.type || "").trim(),
+        selectedNodeLabel: String(selectedNode?.label || "").trim(),
       };
       const previousSnapshot = this.lastCanvasSelectionSnapshot;
       const selectionUnchanged = (
@@ -4993,10 +5135,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
         && Array.isArray(previousSnapshot?.nodeIds)
         && previousSnapshot.nodeIds.length === nextSnapshot.nodeIds.length
         && previousSnapshot.nodeIds.every((nodeId, index) => nodeId === nextSnapshot.nodeIds[index])
+        && String(previousSnapshot?.selectedNodeType || "") === nextSnapshot.selectedNodeType
+        && String(previousSnapshot?.selectedNodeLabel || "") === nextSnapshot.selectedNodeLabel
       );
       this.lastCanvasSelectionSnapshot = nextSnapshot;
       if (!selectionUnchanged) {
         this.syncActiveTaskToCanvasContext();
+        void this.refreshSelectedGroupContextPreview({ snapshot: nextSnapshot, force: true });
+        this.requestViewRefresh();
       }
     } catch {
       // Ignore transient Canvas introspection failures during polling.
@@ -5033,8 +5179,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
       nodeIds: Array.from(new Set(nodeIds)).sort(),
       selectionIdentity: this.buildTaskSelectionIdentityFromNodeIds(canvasPath, nodeIds),
       capturedAt: Date.now(),
+      selectedNodeType: "",
+      selectedNodeLabel: "",
     };
     this.syncActiveTaskToCanvasContext();
+    void this.refreshSelectedGroupContextPreview({ force: true });
   }
 
   getRecentSelectionSnapshotForActiveCanvas() {
@@ -5061,9 +5210,38 @@ module.exports = class OpenAgentPlugin extends Plugin {
     };
   }
 
-  readCanvasMarkdownFileNodeSync(node, warnings = []) {
+  buildSelectedGroupContextPreviewKey(snapshot = null) {
+    const targetSnapshot = snapshot || this.getRecentSelectionSnapshotForActiveCanvas();
+    if (!targetSnapshot?.canvasPath || !Array.isArray(targetSnapshot.nodeIds) || targetSnapshot.nodeIds.length !== 1) {
+      return "";
+    }
+
+    if (String(targetSnapshot.selectedNodeType || "").trim() !== "group") {
+      return "";
+    }
+
+    return `${targetSnapshot.canvasPath}::${targetSnapshot.nodeIds[0]}`;
+  }
+
+  buildLoadingSelectedGroupContextPreview(snapshot) {
+    if (!snapshot?.canvasPath) {
+      return null;
+    }
+
+    return {
+      status: "loading",
+      canvasPath: snapshot.canvasPath,
+      groupNodeId: Array.isArray(snapshot.nodeIds) ? String(snapshot.nodeIds[0] || "").trim() : "",
+      groupLabel: String(snapshot.selectedNodeLabel || "").trim() || "Untitled group",
+      textBlocks: [],
+      markdownFiles: [],
+      warnings: [],
+    };
+  }
+
+  async readCanvasMarkdownFilePreviewEntry(node, warnings = []) {
     const filePath = typeof node?.file === "string" ? node.file.trim() : "";
-    const abstractFile = this.app.vault.getAbstractFileByPath(filePath);
+    const abstractFile = await this.resolver.waitForMarkdownCanvasFile(filePath, { timeoutMs: 0 });
     if (!(abstractFile instanceof TFile)) {
       warnings.push(`Missing file node target: ${filePath}`);
       return null;
@@ -5075,42 +5253,44 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     const vaultBasePath = this.getVaultBasePath();
-    const absolutePath = vaultBasePath
-      ? this.resolver.resolveVaultPath(vaultBasePath, abstractFile.path)
-      : "";
-    if (!absolutePath || !fs.existsSync(absolutePath)) {
-      warnings.push(`Missing file node target: ${filePath}`);
-      return null;
-    }
-
-    try {
-      return {
-        id: String(node?.id || ""),
-        path: abstractFile.path,
-        absolutePath,
-        name: abstractFile.basename,
-        content: fs.readFileSync(absolutePath, "utf8"),
-      };
-    } catch {
-      warnings.push(`Unable to read file node target: ${filePath}`);
-      return null;
-    }
+    return {
+      id: String(node?.id || ""),
+      path: abstractFile.path,
+      absolutePath: vaultBasePath
+        ? this.resolver.resolveVaultPath(vaultBasePath, abstractFile.path)
+        : "",
+      name: abstractFile.basename,
+    };
   }
 
-  getSelectedGroupContextPreview() {
-    const selectionSnapshot = this.getRecentSelectionSnapshotForActiveCanvas();
-    if (!selectionSnapshot || selectionSnapshot.nodeIds.length !== 1) {
+  async buildSelectedGroupContextPreview(snapshot) {
+    const canvasPath = String(snapshot?.canvasPath || "").trim();
+    const groupNodeId = Array.isArray(snapshot?.nodeIds) ? String(snapshot.nodeIds[0] || "").trim() : "";
+    if (!canvasPath || !groupNodeId) {
       return null;
     }
 
-    const canvasSnapshot = this.getCanvasSnapshotSync(selectionSnapshot.canvasPath);
-    const selectedNode = canvasSnapshot?.nodeById?.get(selectionSnapshot.nodeIds[0]) || null;
+    const abstractFile = this.app.vault.getAbstractFileByPath(canvasPath);
+    if (!(abstractFile instanceof TFile) || abstractFile.extension !== "canvas") {
+      return null;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(await this.app.vault.cachedRead(abstractFile));
+    } catch {
+      return null;
+    }
+
+    const nodeById = new Map(
+      (Array.isArray(parsed?.nodes) ? parsed.nodes : []).map((node) => [String(node?.id || "").trim(), node])
+    );
+    const selectedNode = nodeById.get(groupNodeId) || null;
     if (String(selectedNode?.type || "") !== "group") {
       return null;
     }
 
-    const groupNodeId = String(selectedNode?.id || "").trim();
-    const containedNodes = Array.from(canvasSnapshot?.nodeById?.values?.() || [])
+    const containedNodes = Array.from(nodeById.values())
       .filter((node) => {
         const nodeId = String(node?.id || "").trim();
         return nodeId && nodeId !== groupNodeId && this.resolver.doesCanvasGroupContainNode(selectedNode, node);
@@ -5120,37 +5300,166 @@ module.exports = class OpenAgentPlugin extends Plugin {
     const textBlocks = [];
     const markdownFiles = [];
     const warnings = [];
-
-    containedNodes.forEach((node) => {
+    const previewEntries = await Promise.all(containedNodes.map(async (node) => {
       const nodeId = String(node?.id || "").trim();
       if (!nodeId) {
-        return;
+        return null;
       }
 
       if (String(node?.type || "") === "text") {
         const text = typeof node?.text === "string" ? node.text.trim() : "";
-        if (text) {
-          textBlocks.push({ id: nodeId, text });
-        }
-        return;
+        return text ? { kind: "text", value: { id: nodeId, text } } : null;
       }
 
       if (String(node?.type || "") === "file") {
-        const markdownFile = this.readCanvasMarkdownFileNodeSync(node, warnings);
-        if (markdownFile) {
-          markdownFiles.push(markdownFile);
-        }
+        const nodeWarnings = [];
+        const markdownFile = await this.readCanvasMarkdownFilePreviewEntry(node, nodeWarnings);
+        return {
+          kind: "file",
+          value: markdownFile,
+          warnings: nodeWarnings,
+        };
+      }
+
+      return null;
+    }));
+
+    previewEntries.forEach((entry) => {
+      if (!entry) {
+        return;
+      }
+
+      if (entry.kind === "text" && entry.value) {
+        textBlocks.push(entry.value);
+      }
+
+      if (entry.kind === "file" && entry.value) {
+        markdownFiles.push(entry.value);
+      }
+
+      if (Array.isArray(entry.warnings) && entry.warnings.length > 0) {
+        warnings.push(...entry.warnings);
       }
     });
 
     return {
-      canvasPath: selectionSnapshot.canvasPath,
+      status: "ready",
+      canvasPath,
       groupNodeId,
-      groupLabel: String(selectedNode?.label || "").trim() || "Untitled group",
+      groupLabel: String(selectedNode?.label || "").trim() || String(snapshot?.selectedNodeLabel || "").trim() || "Untitled group",
       textBlocks,
       markdownFiles,
       warnings,
     };
+  }
+
+  async refreshSelectedGroupContextPreview(options = {}) {
+    const snapshot = options.snapshot || this.getRecentSelectionSnapshotForActiveCanvas();
+    const nextKey = this.buildSelectedGroupContextPreviewKey(snapshot);
+    if (!nextKey) {
+      const didChange = this.selectedGroupContextPreviewState.key || this.selectedGroupContextPreviewState.preview || this.selectedGroupContextPreviewState.loading;
+      this.selectedGroupContextPreviewState = {
+        key: "",
+        preview: null,
+        loading: false,
+      };
+      if (didChange) {
+        this.requestViewRefresh();
+      }
+      return null;
+    }
+
+    if (
+      options.force !== true
+      && this.selectedGroupContextPreviewState.key === nextKey
+      && (this.selectedGroupContextPreviewState.loading || this.selectedGroupContextPreviewState.preview)
+    ) {
+      return this.selectedGroupContextPreviewState.preview;
+    }
+
+    this.selectedGroupContextPreviewState = {
+      key: nextKey,
+      preview: this.buildLoadingSelectedGroupContextPreview(snapshot),
+      loading: true,
+    };
+    this.requestViewRefresh();
+
+    const loadPromise = this.buildSelectedGroupContextPreview(snapshot)
+      .then((preview) => {
+        if (this.selectedGroupContextPreviewState.key !== nextKey) {
+          return preview;
+        }
+
+        this.selectedGroupContextPreviewState = {
+          key: nextKey,
+          preview,
+          loading: false,
+        };
+        this.requestViewRefresh();
+        return preview;
+      })
+      .catch(() => {
+        if (this.selectedGroupContextPreviewState.key === nextKey) {
+          this.selectedGroupContextPreviewState = {
+            key: nextKey,
+            preview: null,
+            loading: false,
+          };
+          this.requestViewRefresh();
+        }
+        return null;
+      })
+      .finally(() => {
+        if (this.selectedGroupContextPreviewLoadPromise === loadPromise) {
+          this.selectedGroupContextPreviewLoadPromise = null;
+        }
+      });
+
+    this.selectedGroupContextPreviewLoadPromise = loadPromise;
+    return loadPromise;
+  }
+
+  handleSelectedGroupContextDependencyMutation(file, oldPath = "") {
+    const snapshot = this.getRecentSelectionSnapshotForActiveCanvas();
+    const previewKey = this.buildSelectedGroupContextPreviewKey(snapshot);
+    if (!previewKey) {
+      return;
+    }
+
+    const nextPath = file instanceof TFile ? String(file.path || "").trim() : "";
+    const normalizedOldPath = String(oldPath || "").trim();
+    const preview = this.selectedGroupContextPreviewState.preview;
+    const dependsOnCurrentFile = [nextPath, normalizedOldPath].some((candidatePath) => {
+      if (!candidatePath) {
+        return false;
+      }
+
+      if (candidatePath === snapshot.canvasPath) {
+        return true;
+      }
+
+      return Array.isArray(preview?.markdownFiles) && preview.markdownFiles.some((markdownFile) => markdownFile?.path === candidatePath);
+    });
+    if (!dependsOnCurrentFile) {
+      return;
+    }
+
+    void this.refreshSelectedGroupContextPreview({ snapshot, force: true });
+  }
+
+  getSelectedGroupContextPreview() {
+    const snapshot = this.getRecentSelectionSnapshotForActiveCanvas();
+    const previewKey = this.buildSelectedGroupContextPreviewKey(snapshot);
+    if (!previewKey) {
+      return null;
+    }
+
+    if (this.selectedGroupContextPreviewState.key !== previewKey) {
+      void this.refreshSelectedGroupContextPreview({ snapshot });
+      return this.buildLoadingSelectedGroupContextPreview(snapshot);
+    }
+
+    return this.selectedGroupContextPreviewState.preview || this.buildLoadingSelectedGroupContextPreview(snapshot);
   }
 
   getActiveCanvasPath() {
