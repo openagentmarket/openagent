@@ -9,6 +9,7 @@ const vaultPath = resolveOpenVaultPath();
 const smokeDirName = "OpenAgent Smoke";
 const smokeDir = path.join(vaultPath, smokeDirName);
 const controlDir = path.join(vaultPath, ".openagent");
+const pluginDataPath = path.join(vaultPath, ".obsidian", "plugins", "openagent", "data.json");
 const requestPath = path.join(controlDir, "smoke-request.json");
 const resultPath = path.join(controlDir, "smoke-result.json");
 const requestBaseId = `follow-up-chain-smoke-${Date.now()}`;
@@ -131,6 +132,26 @@ function linkPlugin() {
   });
 }
 
+function enableDevSmokeRequests() {
+  fs.mkdirSync(path.dirname(pluginDataPath), { recursive: true });
+  let existingState = {};
+  if (fs.existsSync(pluginDataPath)) {
+    try {
+      existingState = JSON.parse(fs.readFileSync(pluginDataPath, "utf8"));
+    } catch {
+      existingState = {};
+    }
+  }
+
+  fs.writeFileSync(pluginDataPath, `${JSON.stringify({
+    ...existingState,
+    settings: {
+      ...(existingState.settings || {}),
+      enableDevSmokeRequests: true,
+    },
+  }, null, 2)}\n`, "utf8");
+}
+
 function writeFixtureFiles() {
   fs.mkdirSync(smokeDir, { recursive: true });
   fs.mkdirSync(controlDir, { recursive: true });
@@ -210,6 +231,7 @@ function writeSmokeRequest({ requestId, nodeIds }) {
 function restartObsidian() {
   spawnSync("osascript", ["-e", 'tell application "Obsidian" to quit'], { stdio: "ignore" });
   waitForObsidianProcess(false, 15_000);
+  enableDevSmokeRequests();
   execFileSync("open", ["-a", "Obsidian"], { stdio: "ignore" });
   waitForObsidianProcess(true, 20_000);
 }

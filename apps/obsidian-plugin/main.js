@@ -27,6 +27,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   daemonLaunchCommand: "",
   daemonLaunchCwd: "",
   daemonSandboxMode: "workspace-write",
+  enableDebugLogging: false,
+  enableDevSmokeRequests: false,
   workspaceRoot: "Workspaces",
 });
 const DAEMON_SANDBOX_MODE_OPTIONS = Object.freeze({
@@ -2873,6 +2875,37 @@ class OpenAgentSettingTab extends PluginSettingTab {
           }
         });
       });
+
+    containerEl.createEl("h3", { text: "Developer options" });
+
+    new Setting(containerEl)
+      .setName("Enable smoke request polling")
+      .setDesc("Developer only. Poll `.openagent/smoke-request.json` in the vault and execute smoke runs automatically.")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.isDevSmokePollingEnabled())
+          .onChange(async (value) => {
+            this.plugin.settings.enableDevSmokeRequests = value === true;
+            this.plugin.configureDevSmokePolling();
+            await this.plugin.persistPluginState();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Enable debug logging")
+      .setDesc("Developer only. Record OpenAgent debug events and append them to `.openagent/new-thread-debug.jsonl` in the vault.")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.isDebugLoggingEnabled())
+          .onChange(async (value) => {
+            this.plugin.settings.enableDebugLogging = value === true;
+            if (!this.plugin.isDebugLoggingEnabled()) {
+              this.plugin.debugEvents = [];
+            }
+            await this.plugin.persistPluginState();
+            this.plugin.requestViewRefresh();
+          });
+      });
   }
 }
 
@@ -2906,6 +2939,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.logoDataUrl = "";
     this.logoLoadPromise = null;
     this.debugEvents = [];
+    this.devSmokePollIntervalId = null;
     this.resultNodeSyncStateByTaskId = normalizeResultNodeSyncState(
       savedSyncState.resultNodeSyncStateByTaskId
       || savedState.uiState?.resultNodeSyncStateByTaskId
@@ -2940,9 +2974,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.registerInterval(window.setInterval(() => {
       this.captureCanvasSelectionSnapshot();
     }, SELECTION_SNAPSHOT_POLL_MS));
-    this.registerInterval(window.setInterval(() => {
-      this.maybeRunDevSmokeRequest();
-    }, DEV_SMOKE_POLL_MS));
+    this.configureDevSmokePolling();
     this.registerInterval(window.setInterval(() => {
       void this.refreshRunningTasks();
     }, RUNNING_TASK_REFRESH_POLL_MS));
@@ -3454,7 +3486,45 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return path.join(vaultBasePath, relativePath);
   }
 
+  isDevSmokePollingEnabled() {
+    return this.settings?.enableDevSmokeRequests === true;
+  }
+
+  isDebugLoggingEnabled() {
+    return this.settings?.enableDebugLogging === true;
+  }
+
+  configureDevSmokePolling() {
+    if (this.devSmokePollIntervalId != null) {
+      window.clearInterval(this.devSmokePollIntervalId);
+      this.devSmokePollIntervalId = null;
+    }
+
+    if (!this.isDevSmokePollingEnabled()) {
+      void this.appendDebugEvent("dev_smoke_polling_configured", {
+        enabled: false,
+        requestPath: this.getDevSmokeAbsolutePath(DEV_SMOKE_REQUEST_RELATIVE_PATH),
+      });
+      return;
+    }
+
+    this.devSmokePollIntervalId = window.setInterval(() => {
+      this.maybeRunDevSmokeRequest();
+    }, DEV_SMOKE_POLL_MS);
+    this.registerInterval(this.devSmokePollIntervalId);
+    void this.appendDebugEvent("dev_smoke_polling_configured", {
+      enabled: true,
+      pollMs: DEV_SMOKE_POLL_MS,
+      requestPath: this.getDevSmokeAbsolutePath(DEV_SMOKE_REQUEST_RELATIVE_PATH),
+    });
+    this.maybeRunDevSmokeRequest();
+  }
+
   maybeRunDevSmokeRequest() {
+    if (!this.isDevSmokePollingEnabled()) {
+      return;
+    }
+
     if (this.devSmokeRunPromise) {
       return;
     }
@@ -3491,6 +3561,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
       return;
     }
     this.lastProcessedSmokeRequestId = requestId;
+    void this.appendDebugEvent("dev_smoke_request_detected", {
+      requestId,
+      canvasPath: String(request?.canvasPath || ""),
+      mode: String(request?.mode || ""),
+      runTask: request?.runTask !== false,
+      forceNewTask: request?.forceNewTask === true,
+    });
 
     try {
       let selection = await this.resolveDevSmokeSelection(request);
@@ -3653,6 +3730,10 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   async appendDebugEvent(type, payload = {}) {
+    if (!this.isDebugLoggingEnabled()) {
+      return null;
+    }
+
     const event = {
       type: String(type || "event"),
       createdAt: new Date().toISOString(),
