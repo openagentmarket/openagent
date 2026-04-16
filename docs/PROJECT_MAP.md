@@ -116,6 +116,7 @@ Important tracked single files:
 - [`docs/USER_GUIDE.md`](./USER_GUIDE.md): user workflow inside Obsidian
 - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md): plugin/daemon/core architecture
 - [`docs/OBSIDIAN_PLUGIN_DEV.md`](./OBSIDIAN_PLUGIN_DEV.md): local plugin development workflow
+- [`docs/OBSIDIAN_PLUGIN_RELEASE.md`](./OBSIDIAN_PLUGIN_RELEASE.md): plugin packaging and GitHub release workflow
 - [`package.json`](../package.json): workspace scripts and top-level commands
 
 ## What Is Source Code vs. Local Working State

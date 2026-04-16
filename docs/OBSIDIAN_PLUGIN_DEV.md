@@ -6,6 +6,7 @@ Read these first when you need broader context:
 
 - [docs/USER_GUIDE.md](./USER_GUIDE.md) for the user-facing workflow
 - [docs/ARCHITECTURE.md](./ARCHITECTURE.md) for the plugin, daemon, and task model
+- [docs/OBSIDIAN_PLUGIN_RELEASE.md](./OBSIDIAN_PLUGIN_RELEASE.md) for versioning and GitHub release steps
 
 ## Source of truth
 
