@@ -26,6 +26,7 @@ jobs:
       - run: node ./scripts/package-obsidian-plugin-release.mjs "$RELEASE_TAG"
       - run: |
           gh release create "$RELEASE_TAG" \
+            dist/obsidian-plugin-release/*.zip \
             dist/obsidian-plugin-release/main.js \
             dist/obsidian-plugin-release/manifest.json \
             dist/obsidian-plugin-release/styles.css \

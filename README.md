@@ -60,13 +60,19 @@ Use the openagent-canvas-bootstrap skill to update OpenAgent on this machine.
 
 ## Plugin Install Artifacts
 
-For a manual Obsidian plugin install, download these assets from [GitHub Releases](https://github.com/openagentmarket/openagent/releases):
+For the simplest Obsidian plugin install, download the plugin zip from [GitHub Releases](https://github.com/openagentmarket/openagent/releases):
+
+- `openagent-obsidian-plugin-vX.Y.Z.zip`
+
+Extract it into `.obsidian/plugins` in your vault so it creates `.obsidian/plugins/openagent`.
+
+If you prefer the manual path, you can still download:
 
 - `main.js`
 - `manifest.json`
 - `styles.css`
 
-Then copy them into `.obsidian/plugins/openagent` in your vault.
+and copy them into `.obsidian/plugins/openagent`.
 Full steps live in [docs/MANUAL_INSTALL.md](docs/MANUAL_INSTALL.md).
 
 ## License
