@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import http from "node:http";
 import { promisify } from "node:util";
 import { URL } from "node:url";
 import { createQrDataUrl } from "./invite-artifacts.js";
 
 const execFileAsync = promisify(execFile);
+const OPENAGENT_WORDMARK_DATA_URL = loadOpenAgentWordmarkDataUrl();
 
 export function startDashboardServer(options) {
   const server = http.createServer(async (request, response) => {
@@ -170,42 +172,48 @@ function renderDashboardHtml() {
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f6f3;
-      --panel: rgba(255, 255, 255, 0.92);
+      --bg: #fafafa;
+      --panel: rgba(255, 255, 255, 0.96);
       --panel-strong: #ffffff;
-      --ink: #111111;
-      --muted: #6a6a63;
-      --line: rgba(17, 17, 17, 0.09);
-      --line-strong: rgba(17, 17, 17, 0.14);
-      --surface: rgba(17, 17, 17, 0.03);
-      --surface-strong: rgba(17, 17, 17, 0.05);
-      --shadow: 0 1px 2px rgba(17, 17, 17, 0.04), 0 14px 40px rgba(17, 17, 17, 0.04);
-      --radius-lg: 24px;
-      --radius-md: 18px;
-      --radius-sm: 14px;
+      --ink: #0a0a0a;
+      --muted: #666666;
+      --line: rgba(0, 0, 0, 0.06);
+      --line-strong: rgba(0, 0, 0, 0.09);
+      --surface: rgba(0, 0, 0, 0.025);
+      --surface-strong: rgba(0, 0, 0, 0.04);
+      --shadow: none;
+      --radius-lg: 0px;
+      --radius-md: 0px;
+      --radius-sm: 0px;
+      --font-body: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-body);
       background: var(--bg);
       color: var(--ink);
       min-height: 100vh;
       background-image:
-        radial-gradient(circle at top, rgba(17, 17, 17, 0.045), transparent 32%),
-        linear-gradient(to bottom, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0));
+        radial-gradient(circle at top, rgba(0, 0, 0, 0.03), transparent 28%),
+        linear-gradient(to bottom, #ffffff, rgba(255, 255, 255, 0.72));
     }
     main {
-      max-width: 880px;
+      max-width: 960px;
       margin: 0 auto;
-      padding: 20px 16px 40px;
+      padding: 24px 16px 48px;
     }
     .shell {
-      background: rgba(255, 255, 255, 0.54);
-      border: 1px solid rgba(255, 255, 255, 0.7);
-      border-radius: 28px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92)),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px),
+        linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px);
+      background-size: auto, 24px 24px, 24px 24px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      box-shadow: none;
       overflow: hidden;
     }
     .topbar {
@@ -213,51 +221,22 @@ function renderDashboardHtml() {
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 14px 18px;
+      padding: 14px 20px;
       border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.62);
+      background: rgba(255, 255, 255, 0.88);
     }
     .brand {
       display: inline-flex;
       align-items: center;
       display: flex;
-      gap: 10px;
+      gap: 0;
       min-width: 0;
     }
-    .brand-mark {
-      width: 28px;
-      height: 28px;
-      border-radius: 999px;
-      background: #111111;
-      color: white;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
+    .brand-logo {
+      display: block;
+      width: 136px;
+      height: auto;
       flex: none;
-    }
-    .brand-copy {
-      min-width: 0;
-    }
-    .brand-label {
-      font-size: 0.76rem;
-      line-height: 1;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .brand-title {
-      font-size: 0.96rem;
-      line-height: 1.2;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
     .topbar-actions {
       gap: 10px;
@@ -266,15 +245,15 @@ function renderDashboardHtml() {
       display: flex;
     }
     .content {
-      padding: 20px;
+      padding: 24px;
     }
     .hero {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 16px;
-      align-items: end;
-      margin-bottom: 18px;
-      padding-bottom: 18px;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 20px;
+      padding-bottom: 20px;
       border-bottom: 1px solid var(--line);
     }
     .hero-copy {
@@ -284,30 +263,34 @@ function renderDashboardHtml() {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 7px 11px;
-      border-radius: 999px;
-      background: var(--surface);
-      border: 1px solid var(--line);
+      padding: 7px 10px;
+      border-radius: 0;
+      background: #ffffff;
+      border: 0;
       color: var(--muted);
       font-size: 0.74rem;
       line-height: 1;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       font-weight: 700;
+      font-family: var(--font-mono);
       margin-bottom: 12px;
     }
     h1 {
       margin: 0 0 4px;
-      font-size: clamp(1.8rem, 4vw, 2.7rem);
-      line-height: 0.96;
-      letter-spacing: -0.05em;
-      font-weight: 700;
+      font-size: clamp(1.9rem, 4.1vw, 3rem);
+      line-height: 0.92;
+      letter-spacing: -0.065em;
+      font-weight: 650;
+      font-family: var(--font-display);
+      text-wrap: balance;
     }
     .sub {
       color: var(--muted);
-      font-size: 0.96rem;
-      line-height: 1.5;
-      max-width: 56ch;
+      font-size: 0.94rem;
+      line-height: 1.6;
+      letter-spacing: -0.01em;
+      max-width: 58ch;
     }
     .hero-actions {
       display: flex;
@@ -318,23 +301,24 @@ function renderDashboardHtml() {
     }
     button {
       appearance: none;
-      border: 1px solid transparent;
-      border-radius: 999px;
+      border: 1px solid var(--ink);
+      border-radius: 0;
       padding: 11px 16px;
       background: var(--ink);
       color: white;
       font-weight: 600;
-      letter-spacing: -0.01em;
+      letter-spacing: -0.015em;
+      font-family: var(--font-display);
       cursor: pointer;
-      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1) inset;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
       transition: transform 120ms ease, background 120ms ease, color 120ms ease, border-color 120ms ease;
     }
-    button:hover { transform: translateY(-1px); background: #000; }
+    button:hover { transform: translateY(-1px); background: #1a1a1a; }
     button:disabled { cursor: wait; opacity: 0.7; transform: none; }
     .secondary-button {
-      background: var(--panel-strong);
+      background: rgba(255, 255, 255, 0.9);
       color: var(--ink);
-      border-color: var(--line-strong);
+      border-color: transparent;
       box-shadow: none;
     }
     .secondary-button:hover {
@@ -350,10 +334,10 @@ function renderDashboardHtml() {
     }
     .setup-card {
       background: var(--panel);
-      border: 1px solid var(--line);
+      border: 0;
       border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
-      padding: 18px;
+      box-shadow: none;
+      padding: 20px;
       display: grid;
       gap: 14px;
       margin-bottom: 14px;
@@ -374,18 +358,18 @@ function renderDashboardHtml() {
     }
     .setup-input {
       width: 100%;
-      border: 1px solid var(--line);
+      border: 1px solid transparent;
       border-radius: var(--radius-sm);
-      padding: 12px 14px;
-      background: var(--panel-strong);
+      padding: 13px 14px;
+      background: rgba(0, 0, 0, 0.035);
       color: var(--ink);
       font: inherit;
       outline: none;
       transition: border-color 120ms ease, box-shadow 120ms ease;
     }
     .setup-input:focus {
-      border-color: rgba(17, 17, 17, 0.2);
-      box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.05);
+      border-color: rgba(0, 0, 0, 0.12);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
     }
     .setup-input::placeholder {
       color: #909086;
@@ -395,14 +379,14 @@ function renderDashboardHtml() {
       align-self: flex-start;
       align-items: center;
       padding: 8px 12px;
-      border-radius: 999px;
+      border-radius: 0;
       background: var(--surface);
-      border: 1px solid var(--line);
+      border: 0;
       color: var(--muted);
       font-size: 0.78rem;
       font-weight: 700;
       letter-spacing: 0.02em;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-family: var(--font-mono);
     }
     .setup-actions {
       display: flex;
@@ -412,10 +396,10 @@ function renderDashboardHtml() {
     }
     .runtime-card {
       background: var(--panel);
-      border: 1px solid var(--line);
+      border: 0;
       border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
-      padding: 18px;
+      box-shadow: none;
+      padding: 20px;
       display: grid;
       gap: 14px;
       margin-bottom: 14px;
@@ -424,6 +408,7 @@ function renderDashboardHtml() {
       color: var(--muted);
       font-size: 0.92rem;
       line-height: 1.5;
+      letter-spacing: -0.01em;
     }
     .runtime-actions {
       display: flex;
@@ -444,34 +429,39 @@ function renderDashboardHtml() {
     }
     .room {
       background: var(--panel);
-      border: 1px solid var(--line);
+      border: 0;
       border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
+      box-shadow: none;
       overflow: hidden;
     }
     .room-header {
-      padding: 18px 18px 0;
+      padding: 20px 20px 0;
     }
     .room-title {
       margin: 0;
-      font-size: 1.12rem;
-      line-height: 1.2;
-      letter-spacing: -0.03em;
+      font-size: 1.08rem;
+      line-height: 1.16;
+      letter-spacing: -0.035em;
+      font-family: var(--font-display);
+      font-weight: 650;
     }
     .room-body {
-      padding: 16px 18px 18px;
+      padding: 16px 20px 20px;
       display: grid;
-      gap: 12px;
+      gap: 14px;
     }
     .qr {
-      background: linear-gradient(180deg, rgba(255,255,255,0.96), #fbfbf9);
+      background:
+        radial-gradient(circle at top, rgba(0, 0, 0, 0.015), transparent 42%),
+        #ffffff;
       border-radius: var(--radius-md);
-      border: 1px solid var(--line);
+      border: 0;
       padding: 18px;
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 312px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
     }
     .qr img {
       max-width: 100%;
@@ -486,13 +476,14 @@ function renderDashboardHtml() {
       flex-wrap: wrap;
     }
     .empty {
-      padding: 24px;
-      border: 1px dashed var(--line);
+      padding: 28px;
+      border: 0;
       border-radius: var(--radius-lg);
       text-align: center;
       color: var(--muted);
-      background: rgba(255, 255, 255, 0.64);
+      background: rgba(255, 255, 255, 0.82);
       line-height: 1.5;
+      letter-spacing: -0.01em;
     }
     @media (max-width: 720px) {
       .topbar,
@@ -516,11 +507,7 @@ function renderDashboardHtml() {
     <section class="shell">
       <div class="topbar">
         <div class="brand">
-          <div class="brand-mark">OA</div>
-          <div class="brand-copy">
-            <div class="brand-label">Local Control</div>
-            <div class="brand-title">OpenAgent for Convos</div>
-          </div>
+          <img class="brand-logo" src="${OPENAGENT_WORDMARK_DATA_URL}" alt="OpenAgent" />
         </div>
         <div class="topbar-actions">
           <button class="secondary-button" id="change-project-button">Change Repo</button>
@@ -531,7 +518,7 @@ function renderDashboardHtml() {
         <section class="hero">
           <div class="hero-copy">
             <div class="eyebrow">Codex Local</div>
-            <h1>Chat with your local Codex from Convos.</h1>
+            <h1>Chat with your local Codex from your phone.</h1>
             <div class="sub" id="hero-sub">Scan the QR to open the current chat, or create a new thread when you want a fresh context.</div>
           </div>
           <div class="hero-actions">
@@ -847,4 +834,13 @@ function renderDashboardHtml() {
   </script>
 </body>
 </html>`;
+}
+
+function loadOpenAgentWordmarkDataUrl() {
+  try {
+    const fileBuffer = fs.readFileSync(new URL("../../../docs/images/openagent-wordmark.png", import.meta.url));
+    return `data:image/png;base64,${fileBuffer.toString("base64")}`;
+  } catch {
+    return "";
+  }
 }
