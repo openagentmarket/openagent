@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import qrcode from "qrcode-terminal";
 import { startAgent } from "convos-node-sdk";
-import { loadConfig } from "./config.js";
+import { loadConfig, resolveSelectedProjectPath, saveSelectedProjectPath } from "./config.js";
 import { startDashboardServer } from "./dashboard-server.js";
 import { OpenAgentDaemonClient } from "./daemon-client.js";
 import { createManagedRoom, ManagedRoomStore } from "./managed-rooms.js";
@@ -33,7 +33,7 @@ async function main() {
   const daemon = new OpenAgentDaemonClient({
     baseUrl: config.daemonBaseUrl,
     token: config.daemonToken,
-    cwd: config.projectPath,
+    cwd: config.projectPath || "",
     runtimeConfig: config.runtimeConfig,
   });
 
@@ -112,26 +112,70 @@ async function main() {
   });
 
   roomStore.removeByKind("control-room");
-  primaryRoom = roomStore.getAll()[0] || await createManagedRoom(runtime, daemon, config, roomStore, {
-    kind: "thread-room",
-    name: "OpenAgent Chat",
-    description: `Scan to chat with the local OpenAgent daemon for ${path.basename(config.projectPath)}.`,
-  });
+  if (!config.projectPath) {
+    roomStore.clear();
+  }
+  primaryRoom = getPrimaryRoom(config, roomStore);
 
   const dashboardServer = startDashboardServer({
     host: config.dashboardHost,
     port: config.dashboardPort,
-    projectPath: config.projectPath,
+    getProjectPath: () => config.projectPath || "",
     roomStore,
     getRuntimeInfo: () => runtimeInfo,
     createRoom: async () => {
+      requireProjectPath(config);
       const room = await createManagedRoom(runtime, daemon, config, roomStore, {});
       return room;
+    },
+    setProjectPath: async (projectPath) => {
+      const resolvedPath = resolveSelectedProjectPath(projectPath);
+      if (!resolvedPath) {
+        throw new Error("Project path is required.");
+      }
+
+      const previousProjectPath = config.projectPath || "";
+      const previousDaemonCwd = daemon.cwd;
+      const previousRooms = roomStore.getAll();
+      const changed = resolvedPath !== previousProjectPath;
+
+      config.projectPath = resolvedPath;
+      daemon.cwd = resolvedPath;
+
+      try {
+        if (changed) {
+          roomStore.clear();
+        }
+
+        primaryRoom = getPrimaryRoom(config, roomStore);
+        saveSelectedProjectPath(config.dataDir, resolvedPath);
+        printStartupSummary({
+          address: runtime.address,
+          projectPath: config.projectPath,
+          primaryRoom,
+          dashboardUrl: `http://${config.dashboardHost}:${config.dashboardPort}`,
+        });
+
+        return {
+          projectPath: config.projectPath,
+          primaryRoom,
+        };
+      } catch (error) {
+        config.projectPath = previousProjectPath;
+        daemon.cwd = previousDaemonCwd;
+        roomStore.clear();
+        for (const room of previousRooms.slice().reverse()) {
+          roomStore.upsert(room);
+        }
+        primaryRoom = roomStore.getAll()[0] || null;
+        throw error;
+      }
     },
   });
 
   printStartupSummary({
     address: runtime.address,
+    projectPath: config.projectPath,
     primaryRoom,
     dashboardUrl: `http://${config.dashboardHost}:${config.dashboardPort}`,
   });
@@ -247,18 +291,45 @@ async function handleConversationMessage(ctx, runtime, daemon, config, roomStore
 
 function printStartupSummary(input) {
   console.log("");
+  console.log(`Address: ${input.address}`);
+  console.log(`Dashboard: ${input.dashboardUrl}`);
+
+  if (!input.primaryRoom) {
+    if (input.projectPath) {
+      console.log("No chat created yet");
+      console.log("Open the dashboard and press New Thread when you're ready.");
+    } else {
+      console.log("Project setup required");
+      console.log("Open the dashboard and choose the local repo path first.");
+    }
+    console.log("");
+    return;
+  }
+
   console.log("Default chat ready");
   console.log(`Name: ${input.primaryRoom.name}`);
-  console.log(`Address: ${input.address}`);
   console.log(`Conversation ID: ${input.primaryRoom.conversationId}`);
   console.log(`Invite URL: ${input.primaryRoom.inviteUrl}`);
   console.log(`Convos Deep Link: ${input.primaryRoom.deepLink}`);
   if (input.primaryRoom.qrPngPath) {
     console.log(`QR PNG: ${input.primaryRoom.qrPngPath}`);
   }
-  console.log(`Dashboard: ${input.dashboardUrl}`);
   console.log("");
   qrcode.generate(input.primaryRoom.qrTarget || input.primaryRoom.inviteUrl || input.primaryRoom.deepLink, { small: true });
+}
+
+function getPrimaryRoom(config, roomStore) {
+  if (!config.projectPath) {
+    return null;
+  }
+
+  return roomStore.getAll()[0] || null;
+}
+
+function requireProjectPath(config) {
+  if (!config.projectPath) {
+    throw new Error("Choose a local project folder before creating chats.");
+  }
 }
 
 function makeTaskTitle(ctx) {

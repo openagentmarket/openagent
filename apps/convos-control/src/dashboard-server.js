@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
 import http from "node:http";
+import { promisify } from "node:util";
 import { URL } from "node:url";
 import { createQrDataUrl } from "./invite-artifacts.js";
+
+const execFileAsync = promisify(execFile);
 
 export function startDashboardServer(options) {
   const server = http.createServer(async (request, response) => {
@@ -17,6 +21,21 @@ export function startDashboardServer(options) {
         const room = await options.createRoom();
         const payload = await serializeRoom(room);
         return sendJson(response, 201, { room: payload });
+      }
+
+      if (method === "POST" && url.pathname === "/api/project") {
+        const body = await readJsonBody(request);
+        const result = await options.setProjectPath(body?.projectPath || "");
+        return sendJson(response, 200, {
+          projectPath: result.projectPath,
+          primaryRoom: result.primaryRoom ? await serializeRoom(result.primaryRoom) : null,
+        });
+      }
+
+      if (method === "POST" && url.pathname === "/api/project/pick") {
+        const body = await readJsonBody(request);
+        const projectPath = await pickProjectFolder(body?.projectPath || "");
+        return sendJson(response, 200, { projectPath });
       }
 
       if (method === "GET" && url.pathname === "/") {
@@ -42,10 +61,12 @@ export function startDashboardServer(options) {
 
 async function buildDashboardPayload(options) {
   const runtimeInfo = typeof options.getRuntimeInfo === "function" ? options.getRuntimeInfo() : {};
-  const rooms = options.roomStore.getAll();
+  const projectPath = typeof options.getProjectPath === "function" ? options.getProjectPath() : "";
+  const rooms = projectPath ? options.roomStore.getAll() : [];
 
   return {
-    projectPath: options.projectPath,
+    projectPath,
+    setupRequired: !projectPath,
     bridgeAddress: runtimeInfo.address || "",
     bridgeInboxId: runtimeInfo.inboxId || "",
     primaryRoomConversationId: rooms[0]?.conversationId || "",
@@ -58,6 +79,57 @@ async function serializeRoom(room) {
     ...room,
     qrDataUrl: await createQrDataUrl(room.qrTarget || room.inviteUrl || room.deepLink || ""),
   };
+}
+
+async function readJsonBody(request) {
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.from(chunk));
+  }
+
+  if (!chunks.length) {
+    return {};
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function pickProjectFolder(currentPath = "") {
+  const prompt = "Choose the local repo for OpenAgent";
+  const script = buildFolderPickerScript(prompt, currentPath);
+
+  try {
+    const { stdout } = await execFileAsync("osascript", ["-e", script]);
+    const selected = String(stdout || "").trim();
+    if (!selected) {
+      throw new Error("No folder was selected.");
+    }
+    return selected.replace(/\/+$/, "");
+  } catch (error) {
+    const message = String(error?.stderr || error?.message || error || "");
+    if (/User canceled/i.test(message) || /-128/.test(message)) {
+      throw new Error("Folder selection was cancelled.");
+    }
+    throw error;
+  }
+}
+
+function buildFolderPickerScript(prompt, currentPath) {
+  const escapedPrompt = escapeAppleScriptString(prompt);
+  const escapedPath = escapeAppleScriptString(String(currentPath || "").trim());
+
+  if (escapedPath) {
+    return `
+      set defaultFolder to POSIX file "${escapedPath}"
+      return POSIX path of (choose folder with prompt "${escapedPrompt}" default location defaultFolder)
+    `;
+  }
+
+  return `return POSIX path of (choose folder with prompt "${escapedPrompt}")`;
+}
+
+function escapeAppleScriptString(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll("\"", "\\\"");
 }
 
 function sendJson(response, statusCode, payload) {
@@ -113,6 +185,12 @@ function renderDashboardHtml() {
       gap: 12px;
       margin-bottom: 16px;
     }
+    .hero-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     h1 {
       margin: 0 0 4px;
       font-size: clamp(1.6rem, 4vw, 2.2rem);
@@ -150,6 +228,59 @@ function renderDashboardHtml() {
       margin: 0 0 14px;
       color: var(--muted);
       font-size: 0.9rem;
+    }
+    .setup-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 18px 16px;
+      display: grid;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .setup-copy {
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+    .setup-form {
+      display: grid;
+      gap: 10px;
+    }
+    .setup-buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .setup-input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+    }
+    .setup-input::placeholder {
+      color: #9a907f;
+    }
+    .project-chip {
+      display: inline-flex;
+      align-self: flex-start;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #f1e9dc;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .setup-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
     }
     .rooms {
       display: grid;
@@ -234,19 +365,30 @@ function renderDashboardHtml() {
     <section class="hero">
       <div>
         <h1>OpenAgent Chats</h1>
-        <div class="sub">Scan the QR to open the current chat, or create a new thread when you want a fresh context.</div>
+        <div class="sub" id="hero-sub">Scan the QR to open the current chat, or create a new thread when you want a fresh context.</div>
       </div>
-      <button id="create-button">New Thread</button>
+      <div class="hero-actions">
+        <button class="secondary-button" id="change-project-button">Change Repo</button>
+        <button id="create-button">New Thread</button>
+      </div>
     </section>
 
     <div class="status" id="status"></div>
+    <section id="setup"></section>
     <section class="rooms" id="rooms"></section>
   </main>
 
   <script>
+    const setupNode = document.getElementById("setup");
     const roomsNode = document.getElementById("rooms");
     const statusNode = document.getElementById("status");
     const createButton = document.getElementById("create-button");
+    const changeProjectButton = document.getElementById("change-project-button");
+    const heroSubNode = document.getElementById("hero-sub");
+    let dashboardState = {
+      projectPath: "",
+      setupRequired: true,
+    };
 
     async function loadDashboard() {
       const response = await fetch("/api/dashboard", { cache: "no-store" });
@@ -254,12 +396,116 @@ function renderDashboardHtml() {
         throw new Error("Failed loading dashboard");
       }
       const payload = await response.json();
+      dashboardState = {
+        projectPath: payload.projectPath || "",
+        setupRequired: payload.setupRequired === true,
+      };
+      renderSetup(payload);
       renderRooms(payload.rooms || [], payload.primaryRoomConversationId || "");
+    }
+
+    function renderSetup(payload) {
+      const projectPath = payload.projectPath || "";
+      const setupRequired = payload.setupRequired === true;
+      const hasRooms = Array.isArray(payload.rooms) && payload.rooms.length > 0;
+      createButton.disabled = setupRequired;
+      changeProjectButton.disabled = false;
+      heroSubNode.textContent = setupRequired
+        ? "Paste the local repo path once, then press New Thread when you want to generate a chat you can scan from Convos."
+        : (hasRooms
+          ? "Scan the QR to open the current chat, or create a new thread when you want a fresh context."
+          : "Your repo is connected. Press New Thread when you want to generate a fresh chat and QR code.");
+
+      if (!setupRequired) {
+        const label = projectPath.split(/[\\\\/]/).filter(Boolean).pop() || projectPath;
+        setupNode.innerHTML = \`
+          <div class="setup-actions">
+            <div class="project-chip">Connected to \${escapeHtml(label)}</div>
+          </div>
+        \`;
+        return;
+      }
+
+      setupNode.innerHTML = \`
+        <article class="setup-card">
+          <div class="setup-copy">Choose which local repo Codex should control. Paste the absolute path to the repo folder on this machine.</div>
+          <form class="setup-form" id="setup-form">
+            <input
+              class="setup-input"
+              id="project-path-input"
+              name="projectPath"
+              type="text"
+              placeholder="/Users/you/path/to/repo"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="setup-buttons">
+              <button type="button" class="secondary-button" id="browse-project-button">Browse Folder</button>
+              <button type="submit">Use This Repo</button>
+            </div>
+          </form>
+        </article>
+      \`;
+
+      const form = document.getElementById("setup-form");
+      const input = document.getElementById("project-path-input");
+      const browseButton = document.getElementById("browse-project-button");
+      if (dashboardState.projectPath) {
+        input.value = dashboardState.projectPath;
+      }
+      browseButton.addEventListener("click", async () => {
+        browseButton.disabled = true;
+        statusNode.textContent = "Opening folder picker...";
+        try {
+          const response = await fetch("/api/project/pick", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ projectPath: (input.value || "").trim() || dashboardState.projectPath || "" }),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload?.error?.message || "Could not open the folder picker.");
+          }
+          input.value = payload.projectPath || "";
+          statusNode.textContent = "Folder selected. Press Use This Repo to continue.";
+        } catch (error) {
+          statusNode.textContent = String(error?.message || error);
+        } finally {
+          browseButton.disabled = false;
+        }
+      });
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const projectPathInput = (input.value || "").trim();
+        if (!projectPathInput) {
+          statusNode.textContent = "Paste a local repo path first.";
+          return;
+        }
+
+        form.querySelector("button").disabled = true;
+        statusNode.textContent = "Connecting this repo to OpenAgent...";
+        try {
+          const response = await fetch("/api/project", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ projectPath: projectPathInput }),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload?.error?.message || "Could not use that project path.");
+          }
+          statusNode.textContent = "Project connected. Your first chat is ready.";
+          await loadDashboard();
+        } catch (error) {
+          statusNode.textContent = String(error?.message || error);
+          form.querySelector("button").disabled = false;
+        }
+      });
     }
 
     function renderRooms(rooms, primaryRoomConversationId) {
       if (!rooms.length) {
-        roomsNode.innerHTML = '<div class="empty">No chats yet. Press <strong>New Thread</strong> to mint one.</div>';
+        roomsNode.innerHTML = '<div class="empty">No chats yet. Press <strong>New Thread</strong> when you want to create the first QR chat for this repo.</div>';
         return;
       }
 
@@ -320,6 +566,23 @@ function renderDashboardHtml() {
       }
     }
 
+    async function openProjectSetup() {
+      const payload = {
+        projectPath: dashboardState.projectPath || "",
+        setupRequired: true,
+      };
+      renderSetup(payload);
+      roomsNode.innerHTML = dashboardState.projectPath
+        ? '<div class="empty">Changing repo will create a fresh chat for the new project.</div>'
+        : '<div class="empty">Pick a repo above to create your first chat.</div>';
+      statusNode.textContent = "Choose the local repo you want Codex to control.";
+      const input = document.getElementById("project-path-input");
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+
     function escapeHtml(value) {
       return String(value)
         .replaceAll("&", "&amp;")
@@ -334,6 +597,13 @@ function renderDashboardHtml() {
     }
 
     createButton.addEventListener("click", createThread);
+    changeProjectButton.addEventListener("click", async () => {
+      openProjectSetup();
+      const browseButton = document.getElementById("browse-project-button");
+      if (browseButton) {
+        browseButton.click();
+      }
+    });
     loadDashboard().catch((error) => {
       statusNode.textContent = String(error?.message || error);
     });

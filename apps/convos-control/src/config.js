@@ -3,20 +3,20 @@ import os from "node:os";
 import path from "node:path";
 
 const OPENAGENT_HOME = path.join(os.homedir(), ".openagent");
+const PROJECT_CONFIG_FILENAME = "project-config.json";
 const DEFAULT_CONTROL_ROOM_NAME = "OpenAgent Control";
 const DEFAULT_STATUS_UPDATE_DELAY_MS = 15_000;
 const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
 const DEFAULT_DASHBOARD_PORT = 4321;
 
 export function loadConfig(env = process.env) {
-  const projectPath = normalizeRequiredDirectory(
-    env.OPENAGENT_PROJECT_PATH || env.CODEX_PROJECT_PATH,
-    "OPENAGENT_PROJECT_PATH",
-  );
-  const daemonConfig = loadDaemonConfig(env);
   const dataDir = path.resolve(
     String(env.DATA_DIR || "").trim() || path.join(process.cwd(), ".convos-openagent"),
   );
+  const projectPath = normalizeOptionalDirectory(
+    env.OPENAGENT_PROJECT_PATH || env.CODEX_PROJECT_PATH || loadStoredProjectPath(dataDir),
+  );
+  const daemonConfig = loadDaemonConfig(env);
 
   return {
     dataDir,
@@ -25,7 +25,7 @@ export function loadConfig(env = process.env) {
     controlRoomName: normalizeOptionalString(env.CONTROL_ROOM_NAME) || DEFAULT_CONTROL_ROOM_NAME,
     controlRoomDescription:
       normalizeOptionalString(env.CONTROL_ROOM_DESCRIPTION)
-      || `Control OpenAgent for ${path.basename(projectPath)} from Convos.`,
+      || `Control OpenAgent for ${path.basename(projectPath || process.cwd())} from Convos.`,
     projectPath,
     daemonBaseUrl: daemonConfig.baseUrl,
     daemonToken: daemonConfig.token,
@@ -45,6 +45,25 @@ export function loadConfig(env = process.env) {
       sandboxMode: normalizeOptionalString(env.OPENAGENT_SANDBOX_MODE) || "workspace-write",
     },
   };
+}
+
+export function saveSelectedProjectPath(dataDir, projectPath) {
+  const resolved = resolveSelectedProjectPath(projectPath);
+  if (!resolved) {
+    throw new Error("Project path is required.");
+  }
+
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dataDir, PROJECT_CONFIG_FILENAME),
+    JSON.stringify({ projectPath: resolved }, null, 2),
+    "utf8",
+  );
+  return resolved;
+}
+
+export function resolveSelectedProjectPath(projectPath) {
+  return normalizeOptionalDirectory(projectPath);
 }
 
 function loadDaemonConfig(env) {
@@ -82,13 +101,27 @@ function loadDaemonConfig(env) {
   };
 }
 
-function normalizeRequiredDirectory(value, name) {
+function loadStoredProjectPath(dataDir) {
+  const filePath = path.join(dataDir, PROJECT_CONFIG_FILENAME);
+  if (!fs.existsSync(filePath)) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return normalizeOptionalDirectory(parsed?.projectPath);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeOptionalDirectory(value) {
   const resolved = normalizeOptionalPath(value);
   if (!resolved) {
-    throw new Error(`${name} is required.`);
+    return undefined;
   }
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error(`${name} must point to an existing directory: ${resolved}`);
+    throw new Error(`Project path must point to an existing directory: ${resolved}`);
   }
   return resolved;
 }
