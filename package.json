@@ -16,6 +16,7 @@
     "check": "pnpm run check:syntax && pnpm run check:hygiene",
     "check:hygiene": "node ./scripts/check-hygiene.mjs",
     "check:syntax": "node ./scripts/check-syntax.mjs",
+    "dev:convos": "pnpm --filter @openagent/convos-control dev",
     "dev:daemon": "node ./apps/openagent-daemon/src/server.js",
     "link:obsidian-plugin": "node ./scripts/link-obsidian-plugin.mjs",
     "openagent": "node ./scripts/openagent-cli.mjs",

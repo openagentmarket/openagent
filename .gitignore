@@ -9,9 +9,11 @@ dist
 
 # Local daemon state
 /.openagent/
+/.convos-openagent/
 
 # Obsidian plugin runtime output
 /apps/obsidian-plugin/data.json
+/apps/convos-control/.convos-openagent/
 /.obsidian/
 /.obsidian/plugins/openagent/.hotreload
 /Workspaces/

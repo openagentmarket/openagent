@@ -30,6 +30,7 @@ const STATE_PATH = path.join(OPENAGENT_HOME, "daemon-state.json");
 const DEFAULT_APP_PATH = "/Applications/Codex.app";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
+const TASK_STORE_SAVE_DEBOUNCE_MS = 75;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -524,10 +525,61 @@ class TaskStore {
       tasks: {},
       channels: {},
     });
+    this.threadTaskIdByThreadId = new Map();
+    this.pendingSaveTimer = null;
+    this.isDirty = false;
+    this.rebuildIndexes();
   }
 
   save() {
+    if (this.pendingSaveTimer) {
+      clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = null;
+    }
+
+    if (!this.isDirty) {
+      return;
+    }
+
     writeJson(this.filePath, this.state);
+    this.isDirty = false;
+  }
+
+  scheduleSave() {
+    this.isDirty = true;
+    if (this.pendingSaveTimer) {
+      return;
+    }
+
+    this.pendingSaveTimer = setTimeout(() => {
+      this.pendingSaveTimer = null;
+      this.save();
+    }, TASK_STORE_SAVE_DEBOUNCE_MS);
+
+    if (typeof this.pendingSaveTimer?.unref === "function") {
+      this.pendingSaveTimer.unref();
+    }
+  }
+
+  rebuildIndexes() {
+    this.threadTaskIdByThreadId.clear();
+    Object.values(this.state.tasks).forEach((task) => {
+      this.updateThreadIndex(task, null);
+    });
+  }
+
+  updateThreadIndex(nextTask, previousTask = null) {
+    const taskId = String(nextTask?.taskId || previousTask?.taskId || "").trim();
+    const previousThreadId = String(previousTask?.threadId || "").trim();
+    const nextThreadId = String(nextTask?.threadId || "").trim();
+
+    if (previousThreadId && this.threadTaskIdByThreadId.get(previousThreadId) === taskId) {
+      this.threadTaskIdByThreadId.delete(previousThreadId);
+    }
+
+    if (nextThreadId && taskId) {
+      this.threadTaskIdByThreadId.set(nextThreadId, taskId);
+    }
   }
 
   getTasks() {
@@ -540,6 +592,11 @@ class TaskStore {
     return taskId && this.state.tasks[taskId] ? createTaskBinding(this.state.tasks[taskId]) : null;
   }
 
+  getChannelBinding(channelType, channelId) {
+    const key = `${String(channelType || "").trim()}:${String(channelId || "").trim()}`;
+    return key && this.state.channels[key] ? createChannelBinding(this.state.channels[key]) : null;
+  }
+
   listTasksForSelection(selectionKey) {
     return this.getTasks().filter((task) => task.selectionKey === selectionKey);
   }
@@ -549,7 +606,19 @@ class TaskStore {
   }
 
   findTaskByThreadId(threadId) {
-    return this.getTasks().find((task) => task.threadId === threadId) || null;
+    const normalizedThreadId = String(threadId || "").trim();
+    if (!normalizedThreadId) {
+      return null;
+    }
+
+    const taskId = this.threadTaskIdByThreadId.get(normalizedThreadId);
+    return taskId ? this.getTask(taskId) : null;
+  }
+
+  listChannelBindingsForTask(taskId) {
+    return Object.values(this.state.channels)
+      .map((channel) => createChannelBinding(channel))
+      .filter((channel) => channel.taskId === taskId);
   }
 
   upsertTask(task) {
@@ -557,8 +626,10 @@ class TaskStore {
       ...task,
       updatedAt: nowIso(),
     });
+    const previousTask = this.state.tasks[normalizedTask.taskId] || null;
     this.state.tasks[normalizedTask.taskId] = normalizedTask;
-    this.save();
+    this.updateThreadIndex(normalizedTask, previousTask);
+    this.scheduleSave();
     return this.state.tasks[normalizedTask.taskId];
   }
 
@@ -621,9 +692,15 @@ class TaskStore {
 
   bindChannel(channelBinding) {
     const key = `${channelBinding.channelType}:${channelBinding.channelId}`;
-    this.state.channels[key] = channelBinding;
-    this.save();
-    return channelBinding;
+    const existing = this.state.channels[key];
+    this.state.channels[key] = createChannelBinding({
+      ...existing,
+      ...channelBinding,
+      createdAt: existing?.createdAt || channelBinding.createdAt,
+      updatedAt: nowIso(),
+    });
+    this.scheduleSave();
+    return createChannelBinding(this.state.channels[key]);
   }
 }
 
@@ -677,6 +754,7 @@ class OpenAgentDaemon {
       onRuntimeError: (error) => this.handleRuntimeError(error),
     });
     this.lastRuntimeError = "";
+    this.isShuttingDown = false;
   }
 
   ensureConfig() {
@@ -730,9 +808,28 @@ class OpenAgentDaemon {
     if (!task) {
       return;
     }
+    this.syncChannelBindingsForTask(task);
     this.streamHub.publish(task.taskId, "task.updated", {
       task: this.taskPayload(task),
     });
+  }
+
+  syncChannelBindingsForTask(task) {
+    if (!task?.taskId) {
+      return;
+    }
+
+    const channels = this.store.listChannelBindingsForTask(task.taskId);
+    for (const channel of channels) {
+      if (channel.threadId === task.threadId) {
+        continue;
+      }
+
+      this.store.bindChannel({
+        ...channel,
+        threadId: task.threadId,
+      });
+    }
   }
 
   handleRuntimeError(error) {
@@ -1107,6 +1204,126 @@ class OpenAgentDaemon {
     return this.store.bindChannel(channel);
   }
 
+  buildXmtpSelectionContext(conversationId, body = {}) {
+    const normalizedConversationId = String(conversationId || "").trim();
+    if (!normalizedConversationId) {
+      throw new Error("Conversation id is required.");
+    }
+
+    const shortId = normalizedConversationId.slice(0, 8);
+    const title = String(body.title || "").trim() || `XMTP ${shortId}`;
+    return normalizeCanvasSelection({
+      canvasPath: `xmtp://${normalizedConversationId}`,
+      canvasName: "XMTP",
+      nodeIds: [normalizedConversationId],
+      textBlocks: [],
+      markdownFiles: [],
+      warnings: [],
+      title,
+    });
+  }
+
+  getXmtpConversationBinding(conversationId) {
+    const normalizedConversationId = String(conversationId || "").trim();
+    if (!normalizedConversationId) {
+      throw new Error("Conversation id is required.");
+    }
+
+    const channel = this.store.getChannelBinding("xmtp", normalizedConversationId);
+    const task = channel ? this.store.getTask(channel.taskId) : null;
+    return {
+      channel,
+      task,
+    };
+  }
+
+  createOrReuseTaskFromXmtpConversation(conversationId, body = {}) {
+    const normalizedConversationId = String(conversationId || "").trim();
+    if (!normalizedConversationId) {
+      throw new Error("Conversation id is required.");
+    }
+
+    const existingBinding = this.getXmtpConversationBinding(normalizedConversationId);
+    const existingTask = existingBinding.task;
+    const requestedCwd = normalizeWorkingDirectory(body.cwd || existingTask?.cwd || "");
+    if (!requestedCwd) {
+      throw new Error("Working directory is required for XMTP control.");
+    }
+
+    const forceNewTask = body.forceNewTask === true;
+    const runtimeConfig = normalizeRuntimeConfig(body.runtimeConfig || existingTask?.runtimeConfig);
+    const selectionContext = this.buildXmtpSelectionContext(normalizedConversationId, body);
+    const sourceRef = selectionContext.canvasPath;
+    const selectionKey = createSelectionKey(selectionContext);
+
+    let task = null;
+
+    if (!forceNewTask && existingTask && existingTask.cwd === requestedCwd) {
+      task = this.store.patchTask(existingTask.taskId, {
+        cwd: requestedCwd,
+        title: selectionContext.title,
+        source: "xmtp",
+        sourceRef,
+        selectionContext,
+        runtimeConfig,
+        canvasBinding: this.buildCanvasBinding(selectionContext, existingTask.canvasBinding, {
+          activeSourceNodeId: normalizedConversationId,
+        }),
+      });
+    } else if (!forceNewTask) {
+      const stableTaskId = createTaskId(selectionKey, requestedCwd);
+      const stableTask = this.store.getTask(stableTaskId);
+      if (stableTask) {
+        task = this.store.patchTask(stableTask.taskId, {
+          cwd: requestedCwd,
+          title: selectionContext.title,
+          source: "xmtp",
+          sourceRef,
+          selectionContext,
+          runtimeConfig,
+          canvasBinding: this.buildCanvasBinding(selectionContext, stableTask.canvasBinding, {
+            activeSourceNodeId: normalizedConversationId,
+          }),
+        });
+      }
+    }
+
+    if (!task) {
+      const taskId = forceNewTask
+        ? createFreshTaskId(selectionKey, requestedCwd)
+        : createTaskId(selectionKey, requestedCwd);
+      task = this.store.upsertTask(createTaskBinding({
+        taskId,
+        source: "xmtp",
+        sourceRef,
+        cwd: requestedCwd,
+        status: "idle",
+        title: selectionContext.title,
+        selectionContext,
+        threadId: null,
+        currentTurnId: null,
+        lastError: "",
+        messages: [],
+        runtimeConfig,
+        canvasBinding: this.buildCanvasBinding(selectionContext, {}, {
+          activeSourceNodeId: normalizedConversationId,
+        }),
+      }));
+    }
+
+    const channel = this.store.bindChannel(createChannelBinding({
+      channelType: "xmtp",
+      channelId: normalizedConversationId,
+      taskId: task.taskId,
+      threadId: task.threadId,
+    }));
+
+    return {
+      channel,
+      task,
+    };
+  }
+
   async handleRequest(request, response) {
     if (!this.ensureAuthorized(request, response)) {
       return;
@@ -1209,6 +1426,27 @@ class OpenAgentDaemon {
         return;
       }
 
+      if (request.method === "GET" && /^\/channels\/xmtp\/[^/]+$/.test(pathname)) {
+        const conversationId = decodeURIComponent(pathname.split("/")[3] || "");
+        const binding = this.getXmtpConversationBinding(conversationId);
+        sendJson(response, 200, {
+          channel: binding.channel,
+          task: this.taskPayload(binding.task),
+        });
+        return;
+      }
+
+      if (request.method === "POST" && /^\/channels\/xmtp\/[^/]+\/task$/.test(pathname)) {
+        const body = await readRequestBody(request);
+        const conversationId = decodeURIComponent(pathname.split("/")[3] || "");
+        const binding = this.createOrReuseTaskFromXmtpConversation(conversationId, body);
+        sendJson(response, 200, {
+          channel: binding.channel,
+          task: this.taskPayload(binding.task),
+        });
+        return;
+      }
+
       sendError(response, 404, "Route not found.");
     } catch (error) {
       sendError(response, 400, String(error?.message || error));
@@ -1219,6 +1457,31 @@ class OpenAgentDaemon {
     const server = http.createServer((request, response) => {
       this.handleRequest(request, response);
     });
+
+    const shutdown = () => {
+      if (this.isShuttingDown) {
+        return;
+      }
+
+      this.isShuttingDown = true;
+      this.client.stop();
+      this.store.save();
+    };
+
+    server.on("close", shutdown);
+
+    const shutdownAndExit = () => {
+      shutdown();
+      server.close(() => process.exit(0));
+      const forceExitTimer = setTimeout(() => process.exit(0), 1_000);
+      if (typeof forceExitTimer?.unref === "function") {
+        forceExitTimer.unref();
+      }
+    };
+
+    process.once("beforeExit", shutdown);
+    process.once("SIGINT", shutdownAndExit);
+    process.once("SIGTERM", shutdownAndExit);
 
     server.listen(this.config.port, this.config.host, () => {
       console.log(`[openagent] daemon listening on http://${this.config.host}:${this.config.port}`);

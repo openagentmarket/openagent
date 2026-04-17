@@ -1,0 +1,18 @@
+{
+  "name": "@openagent/convos-control",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node ./src/index.js",
+    "dev": "node --watch ./src/index.js"
+  },
+  "dependencies": {
+    "convos-node-sdk": "https://codeload.github.com/xmtplabs/convos-node-sdk/tar.gz/refs/heads/main",
+    "dotenv": "^16.6.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
