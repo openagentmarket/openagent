@@ -7,10 +7,8 @@ import process from "node:process";
 import qrcode from "qrcode-terminal";
 import { startAgent } from "convos-node-sdk";
 import { loadConfig } from "./config.js";
-import { ensureControlRoom } from "./control-room.js";
 import { startDashboardServer } from "./dashboard-server.js";
 import { OpenAgentDaemonClient } from "./daemon-client.js";
-import { enrichControlRoomInvite } from "./invite-artifacts.js";
 import { createManagedRoom, ManagedRoomStore } from "./managed-rooms.js";
 import { parseMessageContent } from "./parser.js";
 import {
@@ -40,7 +38,7 @@ async function main() {
   });
 
   let runtime = null;
-  let controlRoom = null;
+  let primaryRoom = null;
   let runtimeInfo = {
     address: "",
     inboxId: "",
@@ -113,22 +111,11 @@ async function main() {
     },
   });
 
-  controlRoom = await ensureControlRoom(runtime, {
-    dataDir: config.dataDir,
-    env: config.xmtpEnv,
-    name: config.controlRoomName,
-    description: config.controlRoomDescription,
-  });
-  controlRoom = enrichControlRoomInvite(controlRoom, config.dataDir);
-  roomStore.upsert({
-    kind: "control-room",
-    conversationId: controlRoom.conversationId,
-    name: controlRoom.name,
-    description: controlRoom.description,
-    inviteUrl: controlRoom.inviteUrl,
-    deepLink: controlRoom.deepLink,
-    qrTarget: controlRoom.qrTarget,
-    qrPngPath: controlRoom.qrPngPath,
+  roomStore.removeByKind("control-room");
+  primaryRoom = roomStore.getAll()[0] || await createManagedRoom(runtime, daemon, config, roomStore, {
+    kind: "thread-room",
+    name: "OpenAgent Chat",
+    description: `Scan to chat with the local OpenAgent daemon for ${path.basename(config.projectPath)}.`,
   });
 
   const dashboardServer = startDashboardServer({
@@ -145,7 +132,7 @@ async function main() {
 
   printStartupSummary({
     address: runtime.address,
-    controlRoom,
+    primaryRoom,
     dashboardUrl: `http://${config.dashboardHost}:${config.dashboardPort}`,
   });
 
@@ -260,18 +247,18 @@ async function handleConversationMessage(ctx, runtime, daemon, config, roomStore
 
 function printStartupSummary(input) {
   console.log("");
-  console.log("Control room ready");
-  console.log(`Name: ${input.controlRoom.name}`);
+  console.log("Default chat ready");
+  console.log(`Name: ${input.primaryRoom.name}`);
   console.log(`Address: ${input.address}`);
-  console.log(`Conversation ID: ${input.controlRoom.conversationId}`);
-  console.log(`Invite URL: ${input.controlRoom.inviteUrl}`);
-  console.log(`Convos Deep Link: ${input.controlRoom.deepLink}`);
-  if (input.controlRoom.qrPngPath) {
-    console.log(`QR PNG: ${input.controlRoom.qrPngPath}`);
+  console.log(`Conversation ID: ${input.primaryRoom.conversationId}`);
+  console.log(`Invite URL: ${input.primaryRoom.inviteUrl}`);
+  console.log(`Convos Deep Link: ${input.primaryRoom.deepLink}`);
+  if (input.primaryRoom.qrPngPath) {
+    console.log(`QR PNG: ${input.primaryRoom.qrPngPath}`);
   }
   console.log(`Dashboard: ${input.dashboardUrl}`);
   console.log("");
-  qrcode.generate(input.controlRoom.qrTarget || input.controlRoom.inviteUrl || input.controlRoom.deepLink, { small: true });
+  qrcode.generate(input.primaryRoom.qrTarget || input.primaryRoom.inviteUrl || input.primaryRoom.deepLink, { small: true });
 }
 
 function makeTaskTitle(ctx) {

@@ -53,6 +53,27 @@ export class ManagedRoomStore {
     return Boolean(this.getByConversationId(conversationId));
   }
 
+  removeByKind(kind) {
+    const normalizedKind = String(kind || "").trim();
+    if (!normalizedKind) {
+      return 0;
+    }
+
+    let removed = 0;
+    for (const [conversationId, room] of this.roomsByConversationId.entries()) {
+      if (room?.kind === normalizedKind) {
+        this.roomsByConversationId.delete(conversationId);
+        removed += 1;
+      }
+    }
+
+    if (removed > 0) {
+      this.save();
+    }
+
+    return removed;
+  }
+
   upsert(room) {
     const previous = this.getByConversationId(room?.conversationId);
     const normalized = normalizeManagedRoom({

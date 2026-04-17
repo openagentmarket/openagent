@@ -6,6 +6,8 @@ For installation and bootstrap, start with the root [README](../README.md).
 
 If you want a quick reference for native Obsidian Canvas interactions and shortcuts, read [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md).
 
+If you want to use OpenAgent from your phone through Convos while still running Codex locally on your Mac, read [docs/CONVOS_MOBILE_GUIDE.md](./CONVOS_MOBILE_GUIDE.md).
+
 ## What OpenAgent Does
 
 OpenAgent turns an Obsidian Canvas selection into a Codex task that stays attached to the graph.

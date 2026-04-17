@@ -335,7 +335,7 @@ function buildCanvasPrompt(selectionContext, userMessage = "", options = {}) {
 
   if (trimmedMessage) {
     if (shouldAppendUserRequest(selection.textBlocks, selection.markdownFiles, trimmedMessage, includeContext)) {
-      parts.push(`User request:\n${trimmedMessage}`);
+      parts.push(trimmedMessage);
     }
   } else if (includeContext) {
     parts.push("Use the saved Canvas context and continue with the most helpful next step.");

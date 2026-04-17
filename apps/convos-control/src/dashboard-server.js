@@ -48,6 +48,7 @@ async function buildDashboardPayload(options) {
     projectPath: options.projectPath,
     bridgeAddress: runtimeInfo.address || "",
     bridgeInboxId: runtimeInfo.inboxId || "",
+    primaryRoomConversationId: rooms[0]?.conversationId || "",
     rooms: await Promise.all(rooms.map((room) => serializeRoom(room))),
   };
 }
@@ -81,112 +82,96 @@ function renderDashboardHtml() {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenAgent Convos</title>
+  <title>OpenAgent Chats</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f4efe6;
-      --panel: #fffaf2;
-      --ink: #131313;
-      --muted: #6f675b;
-      --accent: #d95c2b;
-      --accent-strong: #b7481d;
-      --line: #e6dac9;
-      --shadow: 0 12px 40px rgba(21, 14, 7, 0.10);
+      --bg: #f5f2ec;
+      --panel: #fffdf9;
+      --ink: #171717;
+      --muted: #746b5f;
+      --line: #e5dccf;
+      --shadow: 0 8px 24px rgba(21, 14, 7, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(217,92,43,0.14), transparent 28%),
-        linear-gradient(180deg, #f8f2e8 0%, var(--bg) 100%);
+      background: var(--bg);
       color: var(--ink);
       min-height: 100vh;
     }
     main {
-      max-width: 1120px;
+      max-width: 760px;
       margin: 0 auto;
-      padding: 40px 20px 72px;
+      padding: 24px 16px 40px;
     }
     .hero {
       display: flex;
+      align-items: center;
       justify-content: space-between;
-      gap: 20px;
-      align-items: flex-start;
-      margin-bottom: 28px;
+      gap: 12px;
+      margin-bottom: 16px;
     }
     h1 {
-      margin: 0 0 10px;
-      font-size: clamp(2rem, 5vw, 3.5rem);
-      line-height: 0.95;
+      margin: 0 0 4px;
+      font-size: clamp(1.6rem, 4vw, 2.2rem);
+      line-height: 1;
       letter-spacing: -0.04em;
     }
     .sub {
-      max-width: 640px;
       color: var(--muted);
-      font-size: 1rem;
-      line-height: 1.5;
+      font-size: 0.92rem;
+      line-height: 1.4;
     }
     button {
       appearance: none;
-      border: 0;
+      border: 1px solid var(--ink);
       border-radius: 999px;
-      padding: 14px 22px;
+      padding: 11px 16px;
       background: var(--ink);
       color: white;
       font-weight: 700;
       cursor: pointer;
-      box-shadow: var(--shadow);
-      transition: transform 120ms ease, background 120ms ease;
+      transition: transform 120ms ease, background 120ms ease, color 120ms ease;
     }
     button:hover { transform: translateY(-1px); background: #000; }
     button:disabled { cursor: wait; opacity: 0.7; transform: none; }
-    .meta {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 14px;
-      margin-bottom: 24px;
+    .secondary-button {
+      background: transparent;
+      color: var(--ink);
     }
-    .meta-card, .room {
-      background: rgba(255,250,242,0.9);
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(8px);
+    .secondary-button:hover {
+      background: var(--ink);
+      color: white;
     }
-    .meta-card {
-      padding: 18px 20px;
-    }
-    .meta-label {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+    .status {
+      min-height: 22px;
+      margin: 0 0 14px;
       color: var(--muted);
-      margin-bottom: 8px;
-    }
-    .meta-value {
-      font-size: 0.95rem;
-      word-break: break-word;
+      font-size: 0.9rem;
     }
     .rooms {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 18px;
+      gap: 14px;
     }
     .room {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
       overflow: hidden;
     }
     .room-header {
-      padding: 18px 20px 8px;
+      padding: 16px 16px 0;
     }
     .room-kind {
       display: inline-flex;
-      padding: 6px 10px;
+      padding: 5px 9px;
       border-radius: 999px;
-      background: rgba(217,92,43,0.12);
-      color: var(--accent-strong);
-      font-size: 0.75rem;
+      background: #f1e9dc;
+      color: var(--muted);
+      font-size: 0.72rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -194,69 +179,52 @@ function renderDashboardHtml() {
     }
     .room-title {
       margin: 0;
-      font-size: 1.15rem;
+      font-size: 1.05rem;
       line-height: 1.2;
     }
     .room-description {
       color: var(--muted);
-      font-size: 0.95rem;
-      line-height: 1.45;
-      margin: 10px 0 0;
+      font-size: 0.9rem;
+      line-height: 1.4;
+      margin: 8px 0 0;
     }
     .room-body {
-      padding: 0 20px 20px;
+      padding: 14px 16px 16px;
       display: grid;
-      gap: 14px;
+      gap: 12px;
     }
     .qr {
       background: white;
       border-radius: 18px;
       border: 1px solid var(--line);
-      padding: 14px;
+      padding: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 268px;
+      min-height: 312px;
     }
     .qr img {
       max-width: 100%;
-      width: 240px;
-      height: 240px;
+      width: 284px;
+      height: 284px;
       object-fit: contain;
     }
-    .facts {
-      display: grid;
-      gap: 8px;
-      font-size: 0.88rem;
-      color: var(--muted);
-    }
-    .facts strong {
-      color: var(--ink);
-      font-weight: 700;
-    }
-    .link {
-      display: block;
-      color: var(--accent-strong);
-      text-decoration: none;
-      word-break: break-all;
-      line-height: 1.4;
+    .room-actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
     .empty {
-      padding: 28px;
+      padding: 24px;
       border: 1px dashed var(--line);
-      border-radius: 24px;
+      border-radius: 22px;
       text-align: center;
       color: var(--muted);
-      background: rgba(255,250,242,0.55);
-    }
-    .status {
-      min-height: 24px;
-      margin: 10px 0 18px;
-      color: var(--accent-strong);
-      font-weight: 600;
+      background: rgba(255, 253, 249, 0.7);
     }
     @media (max-width: 720px) {
-      .hero { flex-direction: column; }
+      .hero { flex-direction: column; align-items: stretch; }
       button { width: 100%; }
     }
   </style>
@@ -265,19 +233,17 @@ function renderDashboardHtml() {
   <main>
     <section class="hero">
       <div>
-        <h1>OpenAgent Convos</h1>
-        <div class="sub">Create a fresh Convos group that already includes the local Codex bridge, pre-bind it to a new OpenAgent task, then let someone scan the QR from the Convos iPhone app and start chatting.</div>
+        <h1>OpenAgent Chats</h1>
+        <div class="sub">Scan the QR to open the current chat, or create a new thread when you want a fresh context.</div>
       </div>
       <button id="create-button">New Thread</button>
     </section>
 
-    <section class="meta" id="meta"></section>
     <div class="status" id="status"></div>
     <section class="rooms" id="rooms"></section>
   </main>
 
   <script>
-    const metaNode = document.getElementById("meta");
     const roomsNode = document.getElementById("rooms");
     const statusNode = document.getElementById("status");
     const createButton = document.getElementById("create-button");
@@ -288,56 +254,53 @@ function renderDashboardHtml() {
         throw new Error("Failed loading dashboard");
       }
       const payload = await response.json();
-      renderMeta(payload);
-      renderRooms(payload.rooms || []);
+      renderRooms(payload.rooms || [], payload.primaryRoomConversationId || "");
     }
 
-    function renderMeta(payload) {
-      const cards = [
-        { label: "Project", value: payload.projectPath || "unknown" },
-        { label: "Bridge Address", value: payload.bridgeAddress || "not ready" },
-        { label: "Bridge Inbox", value: payload.bridgeInboxId || "not ready" },
-      ];
-      metaNode.innerHTML = cards.map(card => \`
-        <article class="meta-card">
-          <div class="meta-label">\${escapeHtml(card.label)}</div>
-          <div class="meta-value">\${escapeHtml(card.value)}</div>
-        </article>
-      \`).join("");
-    }
-
-    function renderRooms(rooms) {
+    function renderRooms(rooms, primaryRoomConversationId) {
       if (!rooms.length) {
-        roomsNode.innerHTML = '<div class="empty">No Convos rooms yet. Press <strong>New Thread</strong> to mint one.</div>';
+        roomsNode.innerHTML = '<div class="empty">No chats yet. Press <strong>New Thread</strong> to mint one.</div>';
         return;
       }
 
       roomsNode.innerHTML = rooms.map(room => \`
         <article class="room">
           <div class="room-header">
-            <div class="room-kind">\${escapeHtml(room.kind || "thread-room")}</div>
+            <div class="room-kind">\${escapeHtml(room.conversationId === primaryRoomConversationId ? "current chat" : "recent chat")}</div>
             <h2 class="room-title">\${escapeHtml(room.name || room.conversationId)}</h2>
-            <p class="room-description">\${escapeHtml(room.description || "OpenAgent room")}</p>
+            <p class="room-description">\${escapeHtml(room.description || "OpenAgent chat room")}</p>
           </div>
           <div class="room-body">
             <div class="qr">
               \${room.qrDataUrl ? \`<img alt="QR code for \${escapeHtml(room.name || room.conversationId)}" src="\${room.qrDataUrl}" />\` : '<span>No QR available</span>'}
             </div>
-            <div class="facts">
-              <div><strong>Conversation</strong><br />\${escapeHtml(room.conversationId || "")}</div>
-              <div><strong>Task</strong><br />\${escapeHtml(room.taskId || "not bound")}</div>
-              <div><strong>Thread</strong><br />\${escapeHtml(room.threadId || "created on first prompt")}</div>
-              <div><strong>Invite URL</strong><br /><a class="link" href="\${escapeAttribute(room.inviteUrl || "#")}" target="_blank" rel="noreferrer">\${escapeHtml(room.inviteUrl || "not ready")}</a></div>
-              <div><strong>Deep Link</strong><br /><span class="link">\${escapeHtml(room.deepLink || "not ready")}</span></div>
+            <div class="room-actions">
+              <button class="secondary-button" data-copy-invite="\${escapeAttribute(room.inviteUrl || "")}">Copy Invite</button>
             </div>
           </div>
         </article>
       \`).join("");
+
+      roomsNode.querySelectorAll("[data-copy-invite]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const invite = button.getAttribute("data-copy-invite") || "";
+          if (!invite) {
+            statusNode.textContent = "Invite is not ready yet.";
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(invite);
+            statusNode.textContent = "Invite copied.";
+          } catch {
+            statusNode.textContent = "Could not copy invite.";
+          }
+        });
+      });
     }
 
     async function createThread() {
       createButton.disabled = true;
-      statusNode.textContent = "Creating a fresh Convos room and binding it to OpenAgent...";
+      statusNode.textContent = "Creating a fresh chat room...";
       try {
         const response = await fetch("/api/threads", {
           method: "POST",
@@ -348,7 +311,7 @@ function renderDashboardHtml() {
         if (!response.ok) {
           throw new Error(payload?.error?.message || "Failed creating thread");
         }
-        statusNode.textContent = "New Convos thread ready. Scan the QR from the app.";
+        statusNode.textContent = "New chat ready.";
         await loadDashboard();
       } catch (error) {
         statusNode.textContent = String(error?.message || error);

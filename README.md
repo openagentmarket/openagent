@@ -21,6 +21,21 @@ https://github.com/user-attachments/assets/ac415304-7bc1-4022-b9a4-c6b919734a47
 3. OpenAgent sends the selection and nearby markdown context to Codex.
 4. Progress streams into Obsidian and the result is written back to the graph.
 
+## Mobile Control with Convos
+
+OpenAgent can also expose your local Codex runtime through Convos.
+
+That means you can:
+
+- run OpenAgent on your Mac
+- open a local dashboard that shows a QR code
+- scan the QR code with Convos on your phone
+- chat from mobile while Codex still runs locally against your real repo on disk
+
+The key idea is simple: Convos is the remote chat surface, but the work still happens on your own machine through the local OpenAgent daemon.
+
+Read the mobile flow in [docs/CONVOS_MOBILE_GUIDE.md](docs/CONVOS_MOBILE_GUIDE.md).
+
 ## Quick Start
 
 Requirements:
