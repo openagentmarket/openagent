@@ -38,6 +38,14 @@ export function startDashboardServer(options) {
         return sendJson(response, 200, { projectPath });
       }
 
+      if (method === "POST" && url.pathname === "/api/runtime-config") {
+        const body = await readJsonBody(request);
+        const result = await options.setRuntimeConfig(body?.runtimeConfig || {});
+        return sendJson(response, 200, {
+          runtimeConfig: result.runtimeConfig,
+        });
+      }
+
       if (method === "GET" && url.pathname === "/") {
         return sendHtml(response, renderDashboardHtml());
       }
@@ -62,11 +70,15 @@ export function startDashboardServer(options) {
 async function buildDashboardPayload(options) {
   const runtimeInfo = typeof options.getRuntimeInfo === "function" ? options.getRuntimeInfo() : {};
   const projectPath = typeof options.getProjectPath === "function" ? options.getProjectPath() : "";
+  const runtimeConfig = typeof options.getRuntimeConfig === "function"
+    ? options.getRuntimeConfig()
+    : { approvalPolicy: "never", sandboxMode: "workspace-write" };
   const rooms = projectPath ? options.roomStore.getAll() : [];
 
   return {
     projectPath,
     setupRequired: !projectPath,
+    runtimeConfig,
     bridgeAddress: runtimeInfo.address || "",
     bridgeInboxId: runtimeInfo.inboxId || "",
     primaryRoomConversationId: rooms[0]?.conversationId || "",
@@ -282,6 +294,30 @@ function renderDashboardHtml() {
       flex-wrap: wrap;
       align-items: center;
     }
+    .runtime-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .runtime-copy {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    .runtime-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .runtime-button[aria-pressed="true"] {
+      background: var(--ink);
+      color: white;
+    }
     .rooms {
       display: grid;
       gap: 14px;
@@ -388,6 +424,10 @@ function renderDashboardHtml() {
     let dashboardState = {
       projectPath: "",
       setupRequired: true,
+      runtimeConfig: {
+        approvalPolicy: "never",
+        sandboxMode: "workspace-write",
+      },
     };
 
     async function loadDashboard() {
@@ -399,6 +439,10 @@ function renderDashboardHtml() {
       dashboardState = {
         projectPath: payload.projectPath || "",
         setupRequired: payload.setupRequired === true,
+        runtimeConfig: payload.runtimeConfig || {
+          approvalPolicy: "never",
+          sandboxMode: "workspace-write",
+        },
       };
       renderSetup(payload);
       renderRooms(payload.rooms || [], payload.primaryRoomConversationId || "");
@@ -408,6 +452,7 @@ function renderDashboardHtml() {
       const projectPath = payload.projectPath || "";
       const setupRequired = payload.setupRequired === true;
       const hasRooms = Array.isArray(payload.rooms) && payload.rooms.length > 0;
+      const sandboxMode = payload.runtimeConfig?.sandboxMode || "workspace-write";
       createButton.disabled = setupRequired;
       changeProjectButton.disabled = false;
       heroSubNode.textContent = setupRequired
@@ -422,7 +467,25 @@ function renderDashboardHtml() {
           <div class="setup-actions">
             <div class="project-chip">Connected to \${escapeHtml(label)}</div>
           </div>
+          <article class="runtime-card">
+            <div class="runtime-copy">Sandbox mode controls how much filesystem access local Codex gets for future runs from this dashboard.</div>
+            <div class="runtime-actions">
+              <button
+                type="button"
+                class="secondary-button runtime-button"
+                data-sandbox-mode="workspace-write"
+                aria-pressed="\${sandboxMode === "workspace-write" ? "true" : "false"}"
+              >Workspace Only</button>
+              <button
+                type="button"
+                class="secondary-button runtime-button"
+                data-sandbox-mode="danger-full-access"
+                aria-pressed="\${sandboxMode === "danger-full-access" ? "true" : "false"}"
+              >Full Access</button>
+            </div>
+          </article>
         \`;
+        bindRuntimeModeButtons();
         return;
       }
 
@@ -450,6 +513,7 @@ function renderDashboardHtml() {
       const form = document.getElementById("setup-form");
       const input = document.getElementById("project-path-input");
       const browseButton = document.getElementById("browse-project-button");
+      const submitButton = form.querySelector('button[type="submit"]');
       if (dashboardState.projectPath) {
         input.value = dashboardState.projectPath;
       }
@@ -482,7 +546,7 @@ function renderDashboardHtml() {
           return;
         }
 
-        form.querySelector("button").disabled = true;
+        submitButton.disabled = true;
         statusNode.textContent = "Connecting this repo to OpenAgent...";
         try {
           const response = await fetch("/api/project", {
@@ -494,12 +558,52 @@ function renderDashboardHtml() {
           if (!response.ok) {
             throw new Error(payload?.error?.message || "Could not use that project path.");
           }
-          statusNode.textContent = "Project connected. Your first chat is ready.";
+          statusNode.textContent = "Project connected. Press New Thread when you want to create a chat.";
           await loadDashboard();
         } catch (error) {
           statusNode.textContent = String(error?.message || error);
-          form.querySelector("button").disabled = false;
+          submitButton.disabled = false;
         }
+      });
+    }
+
+    function bindRuntimeModeButtons() {
+      setupNode.querySelectorAll("[data-sandbox-mode]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const sandboxMode = button.getAttribute("data-sandbox-mode") || "workspace-write";
+          setupNode.querySelectorAll("[data-sandbox-mode]").forEach((entry) => {
+            entry.disabled = true;
+          });
+          statusNode.textContent = sandboxMode === "danger-full-access"
+            ? "Switching Codex to full access..."
+            : "Switching Codex to workspace-only access...";
+          try {
+            const response = await fetch("/api/runtime-config", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                runtimeConfig: {
+                  approvalPolicy: dashboardState.runtimeConfig?.approvalPolicy || "never",
+                  sandboxMode,
+                },
+              }),
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+              throw new Error(payload?.error?.message || "Could not update runtime mode.");
+            }
+            dashboardState.runtimeConfig = payload.runtimeConfig || dashboardState.runtimeConfig;
+            statusNode.textContent = sandboxMode === "danger-full-access"
+              ? "Full access enabled for future runs."
+              : "Workspace-only access enabled for future runs.";
+            await loadDashboard();
+          } catch (error) {
+            statusNode.textContent = String(error?.message || error);
+            setupNode.querySelectorAll("[data-sandbox-mode]").forEach((entry) => {
+              entry.disabled = false;
+            });
+          }
+        });
       });
     }
 
@@ -573,7 +677,7 @@ function renderDashboardHtml() {
       };
       renderSetup(payload);
       roomsNode.innerHTML = dashboardState.projectPath
-        ? '<div class="empty">Changing repo will create a fresh chat for the new project.</div>'
+        ? '<div class="empty">Changing repo will switch Codex to a different local project. Create a thread after that when you are ready.</div>'
         : '<div class="empty">Pick a repo above to create your first chat.</div>';
       statusNode.textContent = "Choose the local repo you want Codex to control.";
       const input = document.getElementById("project-path-input");

@@ -8,15 +8,28 @@ const DEFAULT_CONTROL_ROOM_NAME = "OpenAgent Control";
 const DEFAULT_STATUS_UPDATE_DELAY_MS = 15_000;
 const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
 const DEFAULT_DASHBOARD_PORT = 4321;
+const DEFAULT_RUNTIME_CONFIG = Object.freeze({
+  approvalPolicy: "never",
+  sandboxMode: "workspace-write",
+});
+const SUPPORTED_SANDBOX_MODES = new Set([
+  "workspace-write",
+  "danger-full-access",
+]);
 
 export function loadConfig(env = process.env) {
   const dataDir = path.resolve(
     String(env.DATA_DIR || "").trim() || path.join(process.cwd(), ".convos-openagent"),
   );
+  const storedState = loadStoredProjectState(dataDir);
   const projectPath = normalizeOptionalDirectory(
-    env.OPENAGENT_PROJECT_PATH || env.CODEX_PROJECT_PATH || loadStoredProjectPath(dataDir),
+    env.OPENAGENT_PROJECT_PATH || env.CODEX_PROJECT_PATH || storedState.projectPath,
   );
   const daemonConfig = loadDaemonConfig(env);
+  const runtimeConfig = normalizeRuntimeConfig({
+    approvalPolicy: normalizeOptionalString(env.OPENAGENT_APPROVAL_POLICY) || storedState.runtimeConfig.approvalPolicy,
+    sandboxMode: normalizeOptionalString(env.OPENAGENT_SANDBOX_MODE) || storedState.runtimeConfig.sandboxMode,
+  });
 
   return {
     dataDir,
@@ -40,10 +53,7 @@ export function loadConfig(env = process.env) {
       DEFAULT_STATUS_UPDATE_DELAY_MS,
       "STATUS_UPDATE_DELAY_MS",
     ),
-    runtimeConfig: {
-      approvalPolicy: normalizeOptionalString(env.OPENAGENT_APPROVAL_POLICY) || "never",
-      sandboxMode: normalizeOptionalString(env.OPENAGENT_SANDBOX_MODE) || "workspace-write",
-    },
+    runtimeConfig,
   };
 }
 
@@ -53,17 +63,30 @@ export function saveSelectedProjectPath(dataDir, projectPath) {
     throw new Error("Project path is required.");
   }
 
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(dataDir, PROJECT_CONFIG_FILENAME),
-    JSON.stringify({ projectPath: resolved }, null, 2),
-    "utf8",
-  );
+  const currentState = loadStoredProjectState(dataDir);
+  writeStoredProjectState(dataDir, {
+    ...currentState,
+    projectPath: resolved,
+  });
   return resolved;
 }
 
 export function resolveSelectedProjectPath(projectPath) {
   return normalizeOptionalDirectory(projectPath);
+}
+
+export function saveRuntimeConfig(dataDir, runtimeConfig) {
+  const normalized = normalizeRuntimeConfig(runtimeConfig);
+  const currentState = loadStoredProjectState(dataDir);
+  writeStoredProjectState(dataDir, {
+    ...currentState,
+    runtimeConfig: normalized,
+  });
+  return normalized;
+}
+
+export function resolveRuntimeConfig(runtimeConfig) {
+  return normalizeRuntimeConfig(runtimeConfig);
 }
 
 function loadDaemonConfig(env) {
@@ -101,18 +124,50 @@ function loadDaemonConfig(env) {
   };
 }
 
-function loadStoredProjectPath(dataDir) {
+function loadStoredProjectState(dataDir) {
   const filePath = path.join(dataDir, PROJECT_CONFIG_FILENAME);
   if (!fs.existsSync(filePath)) {
-    return undefined;
+    return {
+      projectPath: undefined,
+      runtimeConfig: { ...DEFAULT_RUNTIME_CONFIG },
+    };
   }
 
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return normalizeOptionalDirectory(parsed?.projectPath);
+    return {
+      projectPath: normalizeOptionalDirectory(parsed?.projectPath),
+      runtimeConfig: normalizeRuntimeConfig(parsed?.runtimeConfig),
+    };
   } catch {
-    return undefined;
+    return {
+      projectPath: undefined,
+      runtimeConfig: { ...DEFAULT_RUNTIME_CONFIG },
+    };
   }
+}
+
+function writeStoredProjectState(dataDir, value) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dataDir, PROJECT_CONFIG_FILENAME),
+    JSON.stringify({
+      projectPath: value?.projectPath || "",
+      runtimeConfig: normalizeRuntimeConfig(value?.runtimeConfig),
+    }, null, 2),
+    "utf8",
+  );
+}
+
+function normalizeRuntimeConfig(input = {}) {
+  const approvalPolicy = normalizeOptionalString(input?.approvalPolicy) || DEFAULT_RUNTIME_CONFIG.approvalPolicy;
+  const requestedSandboxMode = normalizeOptionalString(input?.sandboxMode) || DEFAULT_RUNTIME_CONFIG.sandboxMode;
+  return {
+    approvalPolicy,
+    sandboxMode: SUPPORTED_SANDBOX_MODES.has(requestedSandboxMode)
+      ? requestedSandboxMode
+      : DEFAULT_RUNTIME_CONFIG.sandboxMode,
+  };
 }
 
 function normalizeOptionalDirectory(value) {

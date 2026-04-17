@@ -6,7 +6,13 @@ import path from "node:path";
 import process from "node:process";
 import qrcode from "qrcode-terminal";
 import { startAgent } from "convos-node-sdk";
-import { loadConfig, resolveSelectedProjectPath, saveSelectedProjectPath } from "./config.js";
+import {
+  loadConfig,
+  resolveRuntimeConfig,
+  resolveSelectedProjectPath,
+  saveRuntimeConfig,
+  saveSelectedProjectPath,
+} from "./config.js";
 import { startDashboardServer } from "./dashboard-server.js";
 import { OpenAgentDaemonClient } from "./daemon-client.js";
 import { createManagedRoom, ManagedRoomStore } from "./managed-rooms.js";
@@ -121,6 +127,7 @@ async function main() {
     host: config.dashboardHost,
     port: config.dashboardPort,
     getProjectPath: () => config.projectPath || "",
+    getRuntimeConfig: () => ({ ...config.runtimeConfig }),
     roomStore,
     getRuntimeInfo: () => runtimeInfo,
     createRoom: async () => {
@@ -170,6 +177,15 @@ async function main() {
         primaryRoom = roomStore.getAll()[0] || null;
         throw error;
       }
+    },
+    setRuntimeConfig: async (runtimeConfig) => {
+      const normalized = resolveRuntimeConfig(runtimeConfig);
+      config.runtimeConfig = normalized;
+      daemon.runtimeConfig = normalized;
+      saveRuntimeConfig(config.dataDir, normalized);
+      return {
+        runtimeConfig: { ...normalized },
+      };
     },
   });
 
