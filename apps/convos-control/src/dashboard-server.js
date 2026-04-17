@@ -170,12 +170,19 @@ function renderDashboardHtml() {
   <style>
     :root {
       color-scheme: light;
-      --bg: #f5f2ec;
-      --panel: #fffdf9;
-      --ink: #171717;
-      --muted: #746b5f;
-      --line: #e5dccf;
-      --shadow: 0 8px 24px rgba(21, 14, 7, 0.08);
+      --bg: #f6f6f3;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-strong: #ffffff;
+      --ink: #111111;
+      --muted: #6a6a63;
+      --line: rgba(17, 17, 17, 0.09);
+      --line-strong: rgba(17, 17, 17, 0.14);
+      --surface: rgba(17, 17, 17, 0.03);
+      --surface-strong: rgba(17, 17, 17, 0.05);
+      --shadow: 0 1px 2px rgba(17, 17, 17, 0.04), 0 14px 40px rgba(17, 17, 17, 0.04);
+      --radius-lg: 24px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
     }
     * { box-sizing: border-box; }
     body {
@@ -184,77 +191,177 @@ function renderDashboardHtml() {
       background: var(--bg);
       color: var(--ink);
       min-height: 100vh;
+      background-image:
+        radial-gradient(circle at top, rgba(17, 17, 17, 0.045), transparent 32%),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0));
     }
     main {
-      max-width: 760px;
+      max-width: 880px;
       margin: 0 auto;
-      padding: 24px 16px 40px;
+      padding: 20px 16px 40px;
     }
-    .hero {
+    .shell {
+      background: rgba(255, 255, 255, 0.54);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+      overflow: hidden;
+    }
+    .topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.62);
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      display: flex;
+      gap: 10px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: #111111;
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      flex: none;
+    }
+    .brand-copy {
+      min-width: 0;
+    }
+    .brand-label {
+      font-size: 0.76rem;
+      line-height: 1;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .brand-title {
+      font-size: 0.96rem;
+      line-height: 1.2;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .topbar-actions {
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      display: flex;
+    }
+    .content {
+      padding: 20px;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero-copy {
+      min-width: 0;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.74rem;
+      line-height: 1;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: clamp(1.8rem, 4vw, 2.7rem);
+      line-height: 0.96;
+      letter-spacing: -0.05em;
+      font-weight: 700;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 0.96rem;
+      line-height: 1.5;
+      max-width: 56ch;
     }
     .hero-actions {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
       justify-content: flex-end;
-    }
-    h1 {
-      margin: 0 0 4px;
-      font-size: clamp(1.6rem, 4vw, 2.2rem);
-      line-height: 1;
-      letter-spacing: -0.04em;
-    }
-    .sub {
-      color: var(--muted);
-      font-size: 0.92rem;
-      line-height: 1.4;
+      align-self: start;
     }
     button {
       appearance: none;
-      border: 1px solid var(--ink);
+      border: 1px solid transparent;
       border-radius: 999px;
       padding: 11px 16px;
       background: var(--ink);
       color: white;
-      font-weight: 700;
+      font-weight: 600;
+      letter-spacing: -0.01em;
       cursor: pointer;
-      transition: transform 120ms ease, background 120ms ease, color 120ms ease;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1) inset;
+      transition: transform 120ms ease, background 120ms ease, color 120ms ease, border-color 120ms ease;
     }
     button:hover { transform: translateY(-1px); background: #000; }
     button:disabled { cursor: wait; opacity: 0.7; transform: none; }
     .secondary-button {
-      background: transparent;
+      background: var(--panel-strong);
       color: var(--ink);
+      border-color: var(--line-strong);
+      box-shadow: none;
     }
     .secondary-button:hover {
-      background: var(--ink);
-      color: white;
+      background: var(--surface);
+      color: var(--ink);
     }
     .status {
-      min-height: 22px;
+      min-height: 21px;
       margin: 0 0 14px;
       color: var(--muted);
-      font-size: 0.9rem;
+      font-size: 0.88rem;
+      line-height: 1.45;
     }
     .setup-card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 22px;
+      border-radius: var(--radius-lg);
       box-shadow: var(--shadow);
-      padding: 18px 16px;
+      padding: 18px;
       display: grid;
-      gap: 12px;
+      gap: 14px;
       margin-bottom: 14px;
     }
     .setup-copy {
       color: var(--muted);
-      font-size: 0.92rem;
-      line-height: 1.45;
+      font-size: 0.93rem;
+      line-height: 1.5;
     }
     .setup-form {
       display: grid;
@@ -268,25 +375,34 @@ function renderDashboardHtml() {
     .setup-input {
       width: 100%;
       border: 1px solid var(--line);
-      border-radius: 16px;
+      border-radius: var(--radius-sm);
       padding: 12px 14px;
-      background: white;
+      background: var(--panel-strong);
       color: var(--ink);
       font: inherit;
+      outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+    .setup-input:focus {
+      border-color: rgba(17, 17, 17, 0.2);
+      box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.05);
     }
     .setup-input::placeholder {
-      color: #9a907f;
+      color: #909086;
     }
     .project-chip {
       display: inline-flex;
       align-self: flex-start;
-      padding: 6px 10px;
+      align-items: center;
+      padding: 8px 12px;
       border-radius: 999px;
-      background: #f1e9dc;
+      background: var(--surface);
+      border: 1px solid var(--line);
       color: var(--muted);
       font-size: 0.78rem;
       font-weight: 700;
       letter-spacing: 0.02em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     .setup-actions {
       display: flex;
@@ -297,26 +413,30 @@ function renderDashboardHtml() {
     .runtime-card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 22px;
+      border-radius: var(--radius-lg);
       box-shadow: var(--shadow);
-      padding: 16px;
+      padding: 18px;
       display: grid;
-      gap: 12px;
+      gap: 14px;
       margin-bottom: 14px;
     }
     .runtime-copy {
       color: var(--muted);
-      font-size: 0.9rem;
-      line-height: 1.45;
+      font-size: 0.92rem;
+      line-height: 1.5;
     }
     .runtime-actions {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
     }
+    .runtime-button {
+      min-width: 148px;
+    }
     .runtime-button[aria-pressed="true"] {
       background: var(--ink);
       color: white;
+      border-color: var(--ink);
     }
     .rooms {
       display: grid;
@@ -325,46 +445,29 @@ function renderDashboardHtml() {
     .room {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 22px;
+      border-radius: var(--radius-lg);
       box-shadow: var(--shadow);
       overflow: hidden;
     }
     .room-header {
-      padding: 16px 16px 0;
-    }
-    .room-kind {
-      display: inline-flex;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: #f1e9dc;
-      color: var(--muted);
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 10px;
+      padding: 18px 18px 0;
     }
     .room-title {
       margin: 0;
-      font-size: 1.05rem;
+      font-size: 1.12rem;
       line-height: 1.2;
-    }
-    .room-description {
-      color: var(--muted);
-      font-size: 0.9rem;
-      line-height: 1.4;
-      margin: 8px 0 0;
+      letter-spacing: -0.03em;
     }
     .room-body {
-      padding: 14px 16px 16px;
+      padding: 16px 18px 18px;
       display: grid;
       gap: 12px;
     }
     .qr {
-      background: white;
-      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), #fbfbf9);
+      border-radius: var(--radius-md);
       border: 1px solid var(--line);
-      padding: 10px;
+      padding: 18px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -385,33 +488,62 @@ function renderDashboardHtml() {
     .empty {
       padding: 24px;
       border: 1px dashed var(--line);
-      border-radius: 22px;
+      border-radius: var(--radius-lg);
       text-align: center;
       color: var(--muted);
-      background: rgba(255, 253, 249, 0.7);
+      background: rgba(255, 255, 255, 0.64);
+      line-height: 1.5;
     }
     @media (max-width: 720px) {
-      .hero { flex-direction: column; align-items: stretch; }
+      .topbar,
+      .hero {
+        grid-template-columns: 1fr;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .topbar { padding: 14px 16px; }
+      .content { padding: 16px; }
+      .topbar-actions,
+      .hero-actions {
+        width: 100%;
+      }
       button { width: 100%; }
     }
   </style>
 </head>
 <body>
   <main>
-    <section class="hero">
-      <div>
-        <h1>OpenAgent Chats</h1>
-        <div class="sub" id="hero-sub">Scan the QR to open the current chat, or create a new thread when you want a fresh context.</div>
+    <section class="shell">
+      <div class="topbar">
+        <div class="brand">
+          <div class="brand-mark">OA</div>
+          <div class="brand-copy">
+            <div class="brand-label">Local Control</div>
+            <div class="brand-title">OpenAgent for Convos</div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="secondary-button" id="change-project-button">Change Repo</button>
+        </div>
       </div>
-      <div class="hero-actions">
-        <button class="secondary-button" id="change-project-button">Change Repo</button>
-        <button id="create-button">New Thread</button>
+
+      <div class="content">
+        <section class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow">Codex Local</div>
+            <h1>Chat with your local Codex from Convos.</h1>
+            <div class="sub" id="hero-sub">Scan the QR to open the current chat, or create a new thread when you want a fresh context.</div>
+          </div>
+          <div class="hero-actions">
+            <button id="create-button">New Thread</button>
+          </div>
+        </section>
+
+        <div class="status" id="status"></div>
+        <section id="setup"></section>
+        <section class="rooms" id="rooms"></section>
       </div>
     </section>
-
-    <div class="status" id="status"></div>
-    <section id="setup"></section>
-    <section class="rooms" id="rooms"></section>
   </main>
 
   <script>
@@ -616,9 +748,7 @@ function renderDashboardHtml() {
       roomsNode.innerHTML = rooms.map(room => \`
         <article class="room">
           <div class="room-header">
-            <div class="room-kind">\${escapeHtml(room.conversationId === primaryRoomConversationId ? "current chat" : "recent chat")}</div>
             <h2 class="room-title">\${escapeHtml(room.name || room.conversationId)}</h2>
-            <p class="room-description">\${escapeHtml(room.description || "OpenAgent chat room")}</p>
           </div>
           <div class="room-body">
             <div class="qr">

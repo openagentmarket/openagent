@@ -1,79 +1,146 @@
-# OpenAgent with Convos
+# OpenAgent Mobile Guide
 
-This guide explains how to use OpenAgent from Convos on your phone while keeping Codex local on your own machine.
+This guide shows how to use OpenAgent from the Convos app on your phone while keeping Codex local on your own machine.
 
-## What This Does
+## What You Are Actually Using
 
-OpenAgent can turn Convos into a mobile chat surface for your local Codex runtime.
+When you chat from Convos:
 
-The important part is that Convos is only the interface. The actual work still runs locally:
+- Convos is the mobile chat UI
+- OpenAgent is the local bridge
+- `openagent-daemon` runs on your Mac
+- Codex still works against the local repo on your disk
 
-- your Mac runs `openagent-daemon`
-- your repo stays on your disk
-- Codex runs against that local repo
-- Convos lets you talk to that local runtime from your phone
+So even though the conversation happens on your phone, the coding work still happens locally on your computer.
 
-In practice, this feels like "chatting with Codex from mobile," but the execution still happens on your machine.
+## What You Need
 
-## How It Works
+- a Mac running this repo
+- Node.js 20+
+- `pnpm`
+- the Convos app on your phone
+- an XMTP environment set through `XMTP_ENV`
 
-The current flow looks like this:
+## Start OpenAgent
 
-1. Start `openagent-daemon` on your Mac.
-2. Start `convos-control`.
-3. Open the local dashboard at `http://127.0.0.1:4321`.
-4. Scan the QR code with the Convos app.
-5. Send messages from Convos.
-6. OpenAgent forwards those messages into your local daemon and local Codex thread.
+From the root of this repo, start the local daemon first:
 
-## Why This Is Useful
+```bash
+pnpm dev:daemon
+```
 
-This gives you a simple remote workflow:
+Then start the Convos bridge:
 
-- check in on a coding task from your phone
-- continue a local Codex chat away from the keyboard
-- spin up a fresh chat context with one tap
-- keep the repo, runtime, and execution local
+```bash
+XMTP_ENV=production pnpm dev:convos
+```
 
-## Thread Model
+If you use a different XMTP environment, replace `production` with the environment you want.
 
-Each Convos chat room maps to one OpenAgent chat context.
+## Open the Dashboard
 
-That means:
-
-- one room is one Codex context
-- `New Thread` creates a fresh room with a fresh context
-- going back to an existing room resumes that room's conversation
-
-## Local Dashboard
-
-The local dashboard is the place where you create and manage chats.
-
-The current UI is intentionally simple:
-
-- a QR code for the current chat
-- a `Copy Invite` button
-- a `New Thread` button for a fresh context
-
-Open the dashboard here:
+After both processes are running, open:
 
 - [http://127.0.0.1:4321](http://127.0.0.1:4321)
 
+This dashboard is the local control surface for mobile chats.
+
+## First-Time Setup
+
+If this is your first time using the dashboard, you will see a repo picker.
+
+1. Click `Browse Folder` or paste the absolute path to your local repo.
+2. Click `Use This Repo`.
+3. Once the repo is connected, click `New Thread`.
+
+OpenAgent does not create a chat automatically after repo selection. You create a chat only when you press `New Thread`.
+
+## How to Start a Chat from Your Phone
+
+Once a thread exists, the dashboard shows:
+
+- a QR code
+- a `Copy Invite` button
+
+To start chatting:
+
+1. Open Convos on your phone.
+2. Scan the QR code from the dashboard.
+3. Join the room in Convos.
+4. Send messages from your phone.
+
+That room is now connected to your local Codex runtime.
+
+## Thread Model
+
+Each Convos room maps to one OpenAgent chat context.
+
+That means:
+
+- one room = one Codex context
+- `New Thread` creates a fresh room with a fresh context
+- reopening an old room resumes the same context for that room
+
+This is the easiest mental model:
+
+- one mobile room
+- one local Codex context
+
+## Change Repo
+
+If you want to point OpenAgent at a different local repo:
+
+1. Click `Change Repo` in the dashboard.
+2. Pick another folder.
+3. Click `Use This Repo`.
+4. Click `New Thread` when you want a new room for that repo.
+
+Changing repos does not automatically create a new QR code. The QR appears only after you create a thread.
+
+## Access Mode
+
+The dashboard lets you choose how much filesystem access local Codex gets for future runs:
+
+- `Workspace Only`
+- `Full Access`
+
+This setting applies to new work sent from the dashboard flow. If you are not sure, keep it on `Workspace Only`.
+
 ## Typical Flow
 
-1. Start OpenAgent locally.
-2. Open the dashboard.
-3. Scan the QR code from Convos on your phone.
-4. Chat from Convos.
-5. When you want a clean context, press `New Thread` on the dashboard and scan the new QR code.
+The normal flow looks like this:
 
-## Mental Model
+1. Start `openagent-daemon`.
+2. Start `convos-control`.
+3. Open the local dashboard.
+4. Choose the repo you want Codex to control.
+5. Press `New Thread`.
+6. Scan the QR with Convos.
+7. Chat from your phone.
+8. Press `New Thread` again whenever you want a fresh context.
 
-The easiest way to think about this setup is:
+## What the Dashboard Is For
 
-- Convos is the remote chat UI
-- OpenAgent is the local bridge
-- `openagent-daemon` is the local runtime
-- Codex still runs on your machine
+The dashboard is only for local setup and room creation.
 
-So even though the conversation happens on mobile, the coding work still happens locally.
+Use it to:
+
+- choose the local repo
+- switch repos later
+- create a new thread
+- copy an invite
+- scan the QR
+- choose `Workspace Only` or `Full Access`
+
+Use Convos for the actual conversation.
+
+## What Stays Local
+
+OpenAgent is designed so the important parts remain on your machine:
+
+- the repo stays local
+- the daemon stays local
+- Codex runs locally
+- the dashboard stays on `127.0.0.1`
+
+Convos is just the remote interface for talking to that local runtime.
