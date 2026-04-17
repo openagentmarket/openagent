@@ -70,6 +70,16 @@ async function main() {
         return;
       }
 
+      if (await isDirectConversation(runtime, ctx.conversationId)) {
+        console.log(`Ignored direct message conversation ${ctx.conversationId}`);
+        return;
+      }
+
+      if (!roomStore.hasConversation(ctx.conversationId)) {
+        console.log(`Ignored message from unmanaged conversation ${ctx.conversationId}`);
+        return;
+      }
+
       const messageKey = await resolveMessageKey(runtime, ctx);
       if (processedMessageKeys.has(messageKey) || processingMessageKeys.has(messageKey)) {
         return;
@@ -331,6 +341,15 @@ async function resolveMessageKey(runtime, ctx) {
   }
 
   return `fallback:${fingerprintMessage(ctx)}`;
+}
+
+async function isDirectConversation(runtime, conversationId) {
+  try {
+    const conversation = await runtime.agent.client.conversations.getConversationById(conversationId);
+    return conversation?.constructor?.name === "Dm";
+  } catch {
+    return false;
+  }
 }
 
 function fingerprintMessage(ctx) {
