@@ -26,6 +26,8 @@ OPENAGENT_VAULT_PATH="${OPENAGENT_VAULT_PATH:-}"
 OPENAGENT_VAULT_ROOT="${OPENAGENT_VAULT_ROOT:-}"
 OPENAGENT_VAULT_NAME="${OPENAGENT_VAULT_NAME:-}"
 OPENAGENT_WORKSPACE_NAME="${OPENAGENT_WORKSPACE_NAME:-$(basename "$TARGET_REPO")}"
+OPENAGENT_SKIP_CONVOS_START="${OPENAGENT_SKIP_CONVOS_START:-0}"
+OPENAGENT_NO_OPEN_DASHBOARD="${OPENAGENT_NO_OPEN_DASHBOARD:-0}"
 
 mkdir -p "$(dirname "$OPENAGENT_INSTALL_DIR")"
 
@@ -65,6 +67,14 @@ fi
 
 if [[ -n "$OPENAGENT_VAULT_NAME" ]]; then
   bootstrap_args+=(--vault-name "$OPENAGENT_VAULT_NAME")
+fi
+
+if [[ "$OPENAGENT_SKIP_CONVOS_START" == "1" ]]; then
+  bootstrap_args+=(--skip-convos-start)
+fi
+
+if [[ "$OPENAGENT_NO_OPEN_DASHBOARD" == "1" ]]; then
+  bootstrap_args+=(--no-open-dashboard)
 fi
 
 echo "Bootstrapping Obsidian vault for $TARGET_REPO"

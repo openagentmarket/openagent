@@ -27,8 +27,12 @@ const OBSIDIAN_APP_PATH = "/Applications/Obsidian.app";
 const OPENAGENT_HOME = path.join(os.homedir(), ".openagent");
 const DAEMON_CONFIG_PATH = path.join(OPENAGENT_HOME, "daemon-config.json");
 const DAEMON_LOG_PATH = path.join(OPENAGENT_HOME, "daemon.log");
+const CONVOS_LOG_PATH = path.join(OPENAGENT_HOME, "convos-control.log");
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DEFAULT_DAEMON_PORT = 4317;
+const DEFAULT_CONVOS_HOST = "127.0.0.1";
+const DEFAULT_CONVOS_PORT = 4321;
+const DEFAULT_XMTP_ENV = "production";
 const PLUGIN_ID = "openagent";
 
 async function main() {
@@ -98,8 +102,10 @@ function parseSetupOptions(args) {
 
 function parseBootstrapRepoOptions(args) {
   const options = {
+    openDashboard: true,
     openObsidian: true,
     repoPath: "",
+    skipConvosStart: false,
     skipDaemonStart: false,
     skipInstall: false,
     vaultName: "",
@@ -125,8 +131,16 @@ function parseBootstrapRepoOptions(args) {
       options.skipDaemonStart = true;
       continue;
     }
+    if (value === "--skip-convos-start") {
+      options.skipConvosStart = true;
+      continue;
+    }
     if (value === "--no-open-obsidian") {
       options.openObsidian = false;
+      continue;
+    }
+    if (value === "--no-open-dashboard") {
+      options.openDashboard = false;
       continue;
     }
     if (value === "--repo") {
@@ -283,6 +297,12 @@ async function runBootstrapRepo(options) {
     await ensureDaemonRunning();
   }
 
+  let dashboardUrl = "";
+  if (!options.skipConvosStart) {
+    console.log("");
+    dashboardUrl = await ensureConvosControlRunning({ projectPath: targetRepoPath });
+  }
+
   if (options.openObsidian) {
     console.log("");
     console.log("Opening Obsidian...");
@@ -295,20 +315,28 @@ async function runBootstrapRepo(options) {
 
   printBootstrapNextSteps({
     canvasPath: workspace.canvasPath,
+    dashboardUrl,
     daemonStarted: !options.skipDaemonStart,
+    convosStarted: !options.skipConvosStart,
     vaultPath,
   });
+
+  if (dashboardUrl && options.openDashboard) {
+    console.log("");
+    console.log("Opening the mobile dashboard...");
+    await openUrl(dashboardUrl);
+  }
 }
 
 function printUsage() {
   console.log(`Usage:
   openagent setup [--vault /path/to/vault] [--skip-install] [--skip-daemon-start]
-  openagent bootstrap-repo --repo /path/to/repo [--vault /path/to/vault] [--vault-root /path/to/vaults] [--vault-name "Repo Canvas"] [--workspace-name "Repo"] [--skip-install] [--skip-daemon-start] [--no-open-obsidian]
+  openagent bootstrap-repo --repo /path/to/repo [--vault /path/to/vault] [--vault-root /path/to/vaults] [--vault-name "Repo Canvas"] [--workspace-name "Repo"] [--skip-install] [--skip-daemon-start] [--skip-convos-start] [--no-open-obsidian] [--no-open-dashboard]
 
 Commands:
   setup    Install dependencies, link the Obsidian plugin, prefill daemon settings, and start the daemon.
   bootstrap-repo
-           Reuse the current Obsidian vault by default, or create a dedicated vault when --vault-root/--vault-name is provided. Then enable OpenAgent, create a workspace + Main.canvas, and open Obsidian.
+           Reuse the current Obsidian vault by default, or create a dedicated vault when --vault-root/--vault-name is provided. Then enable OpenAgent, create a workspace + Main.canvas, start the local mobile dashboard, and open Obsidian.
 `);
 }
 
@@ -491,7 +519,7 @@ function printNextSteps({ vaultPath, pluginEnabled, daemonStarted }) {
   }
 }
 
-function printBootstrapNextSteps({ canvasPath, daemonStarted, vaultPath }) {
+function printBootstrapNextSteps({ canvasPath, dashboardUrl, daemonStarted, convosStarted, vaultPath }) {
   console.log("");
   console.log("Bootstrap complete.");
   console.log("");
@@ -499,9 +527,95 @@ function printBootstrapNextSteps({ canvasPath, daemonStarted, vaultPath }) {
   console.log(`1. Obsidian should open the vault at ${vaultPath}.`);
   console.log(`2. Open ${canvasPath} if it is not already focused.`);
   console.log("3. Select a node on the canvas and run `OpenAgent: New thread from selection`.");
-  if (!daemonStarted) {
-    console.log("4. Start the daemon with `pnpm dev:daemon` from your OpenAgent checkout before running a thread.");
+  if (convosStarted && dashboardUrl) {
+    console.log(`4. The mobile dashboard should be available at ${dashboardUrl}.`);
+    console.log("5. Press `New Thread` there when you want a QR chat for your phone.");
+  } else if (!convosStarted) {
+    console.log("4. Start the Convos dashboard with `XMTP_ENV=production pnpm dev:convos` when you want mobile access.");
   }
+  if (!daemonStarted) {
+    console.log("6. Start the daemon with `pnpm dev:daemon` from your OpenAgent checkout before running a thread.");
+  }
+}
+
+async function ensureConvosControlRunning({ projectPath }) {
+  const dashboardUrl = `http://${DEFAULT_CONVOS_HOST}:${DEFAULT_CONVOS_PORT}`;
+  if (!(await isConvosDashboardHealthy())) {
+    console.log("Starting the OpenAgent mobile dashboard...");
+    fs.mkdirSync(path.dirname(CONVOS_LOG_PATH), { recursive: true });
+    const child = spawn(
+      "/bin/zsh",
+      [
+        "-lc",
+        `cd ${shellEscape(repoRoot)} && export XMTP_ENV=${shellEscape(process.env.XMTP_ENV || DEFAULT_XMTP_ENV)} OPENAGENT_PROJECT_PATH=${shellEscape(projectPath)} && exec pnpm --filter @openagent/convos-control start >> ${shellEscape(CONVOS_LOG_PATH)} 2>&1`,
+      ],
+      {
+        cwd: repoRoot,
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+    child.unref();
+    await waitForConvosDashboard();
+    console.log("OpenAgent mobile dashboard is running.");
+  } else {
+    console.log("OpenAgent mobile dashboard is already running.");
+  }
+
+  await setConvosDashboardProjectPath(projectPath);
+  return dashboardUrl;
+}
+
+async function isConvosDashboardHealthy() {
+  try {
+    const response = await fetch(`http://${DEFAULT_CONVOS_HOST}:${DEFAULT_CONVOS_PORT}/api/dashboard`, {
+      method: "GET",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForConvosDashboard() {
+  let attemptsRemaining = 30;
+  while (attemptsRemaining > 0) {
+    if (await isConvosDashboardHealthy()) {
+      return;
+    }
+    attemptsRemaining -= 1;
+    await sleep(500);
+  }
+  throw new Error(`OpenAgent mobile dashboard did not become ready. Check ${CONVOS_LOG_PATH} for details.`);
+}
+
+async function setConvosDashboardProjectPath(projectPath) {
+  const response = await fetch(`http://${DEFAULT_CONVOS_HOST}:${DEFAULT_CONVOS_PORT}/api/project`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ projectPath }),
+  });
+
+  if (!response.ok) {
+    const payload = await safeReadJson(response);
+    throw new Error(payload?.error?.message || `Could not set the mobile dashboard repo to ${projectPath}.`);
+  }
+}
+
+async function safeReadJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function openUrl(url) {
+  runCommand("open", [url], {
+    cwd: repoRoot,
+  });
 }
 
 async function resolveBootstrapVaultPath(repoPath, options) {
