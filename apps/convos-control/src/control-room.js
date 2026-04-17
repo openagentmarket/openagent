@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createCompatibleInviteUrl } from "./convos-cli-invite.js";
 
 const STATE_FILENAME = "control-room.json";
 
@@ -27,11 +28,15 @@ export async function ensureControlRoom(runtime, options) {
     name: options.name,
     description: options.description,
   });
+  const createdConversation = await getConversation(runtime, createdGroup.conversationId);
+  const inviteUrl = createdConversation
+    ? await createInviteUrl(runtime, createdConversation, options)
+    : createdGroup.inviteUrl;
   const createdState = {
     name: options.name,
     description: options.description,
     conversationId: createdGroup.conversationId,
-    inviteUrl: createdGroup.inviteUrl,
+    inviteUrl,
     updatedAt: new Date().toISOString(),
   };
   saveControlRoomState(options.dataDir, createdState);
@@ -82,10 +87,10 @@ async function getConversation(runtime, conversationId) {
 }
 
 async function createInviteUrl(runtime, conversation, options) {
-  const group = runtime.convos.group(conversation);
-  const invite = await Promise.resolve(group.createInvite({
+  return createCompatibleInviteUrl(runtime, conversation, {
+    dataDir: options.dataDir,
+    env: options.env,
     name: options.name,
     description: options.description,
-  }));
-  return invite.url;
+  });
 }

@@ -5,6 +5,8 @@ import path from "node:path";
 const OPENAGENT_HOME = path.join(os.homedir(), ".openagent");
 const DEFAULT_CONTROL_ROOM_NAME = "OpenAgent Control";
 const DEFAULT_STATUS_UPDATE_DELAY_MS = 15_000;
+const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
+const DEFAULT_DASHBOARD_PORT = 4321;
 
 export function loadConfig(env = process.env) {
   const projectPath = normalizeRequiredDirectory(
@@ -27,6 +29,12 @@ export function loadConfig(env = process.env) {
     projectPath,
     daemonBaseUrl: daemonConfig.baseUrl,
     daemonToken: daemonConfig.token,
+    dashboardHost: normalizeOptionalString(env.OPENAGENT_CONVOS_WEB_HOST) || DEFAULT_DASHBOARD_HOST,
+    dashboardPort: parsePositiveInteger(
+      env.OPENAGENT_CONVOS_WEB_PORT,
+      DEFAULT_DASHBOARD_PORT,
+      "OPENAGENT_CONVOS_WEB_PORT",
+    ),
     statusUpdateDelayMs: parsePositiveInteger(
       env.STATUS_UPDATE_DELAY_MS,
       DEFAULT_STATUS_UPDATE_DELAY_MS,

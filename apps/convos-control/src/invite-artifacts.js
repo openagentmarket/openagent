@@ -2,9 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import QRCode from "qrcode";
 
 const QR_SCRIPT_FILENAME = "openagent-convos-qrcode.swift";
-const QR_IMAGE_FILENAME = "control-room-invite.png";
+const DEFAULT_QR_IMAGE_FILENAME = "control-room-invite.png";
 
 const QR_SWIFT_SOURCE = `
 import Foundation
@@ -52,16 +53,40 @@ do {
 `;
 
 export function enrichControlRoomInvite(controlRoom, dataDir) {
-  const inviteUrl = normalizeInviteUrl(controlRoom?.inviteUrl);
+  return enrichRoomInvite(controlRoom, dataDir, {
+    qrFilename: DEFAULT_QR_IMAGE_FILENAME,
+  });
+}
+
+export function enrichRoomInvite(room, dataDir, options = {}) {
+  const inviteUrl = normalizeInviteUrl(room?.inviteUrl);
   const deepLink = toConvosDeepLink(inviteUrl);
-  const qrPngPath = writeQrPng(deepLink, dataDir);
+  const qrTarget = inviteUrl || deepLink;
+  const qrPngPath = writeQrPng(qrTarget, dataDir, options.qrFilename || roomQrFilename(room));
 
   return {
-    ...controlRoom,
+    ...room,
     inviteUrl,
     deepLink,
+    qrTarget,
     qrPngPath,
   };
+}
+
+export async function createQrDataUrl(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return QRCode.toDataURL(normalized, {
+    margin: 1,
+    width: 320,
+    color: {
+      dark: "#111111",
+      light: "#FFFFFFFF",
+    },
+  });
 }
 
 export function toConvosDeepLink(inviteUrl) {
@@ -96,7 +121,7 @@ function normalizeInviteUrl(inviteUrl) {
   return typeof inviteUrl === "string" ? inviteUrl.trim() : "";
 }
 
-function writeQrPng(text, dataDir) {
+function writeQrPng(text, dataDir, filename) {
   if (!text || process.platform !== "darwin") {
     return null;
   }
@@ -105,7 +130,7 @@ function writeQrPng(text, dataDir) {
   fs.mkdirSync(resolvedDataDir, { recursive: true });
 
   const scriptPath = ensureQrScript();
-  const outputPath = path.join(resolvedDataDir, QR_IMAGE_FILENAME);
+  const outputPath = path.join(resolvedDataDir, filename);
   const result = spawnSync("/usr/bin/swift", [scriptPath, text, outputPath], {
     encoding: "utf8",
     timeout: 30_000,
@@ -117,6 +142,14 @@ function writeQrPng(text, dataDir) {
   }
 
   return outputPath;
+}
+
+function roomQrFilename(room) {
+  const id = String(room?.conversationId || room?.kind || "room")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${id || "room"}-invite.png`;
 }
 
 function ensureQrScript() {

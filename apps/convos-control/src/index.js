@@ -8,8 +8,10 @@ import qrcode from "qrcode-terminal";
 import { startAgent } from "convos-node-sdk";
 import { loadConfig } from "./config.js";
 import { ensureControlRoom } from "./control-room.js";
+import { startDashboardServer } from "./dashboard-server.js";
 import { OpenAgentDaemonClient } from "./daemon-client.js";
 import { enrichControlRoomInvite } from "./invite-artifacts.js";
+import { createManagedRoom, ManagedRoomStore } from "./managed-rooms.js";
 import { parseMessageContent } from "./parser.js";
 import {
   renderBusyStatus,
@@ -39,21 +41,27 @@ async function main() {
 
   let runtime = null;
   let controlRoom = null;
+  let runtimeInfo = {
+    address: "",
+    inboxId: "",
+    testUrl: "",
+  };
   const seenConversationIds = new Set();
   const processedMessageKeys = loadProcessedMessageKeys(config.dataDir);
   const processingMessageKeys = new Set();
+  const roomStore = new ManagedRoomStore(config.dataDir);
 
   runtime = await startAgent({
     dataDir: config.dataDir,
     env: config.xmtpEnv,
     apiUrl: config.xmtpApiUrl,
     onInvite: async (ctx) => {
-      if (!controlRoom || ctx.conversationId !== controlRoom.conversationId) {
+      if (!roomStore.hasConversation(ctx.conversationId)) {
         await ctx.reject();
         return;
       }
 
-      console.log(`Accepted join request for control room from ${ctx.joinerInboxId.slice(0, 12)}...`);
+      console.log(`Accepted join request for managed room ${ctx.conversationId} from ${ctx.joinerInboxId.slice(0, 12)}...`);
       await ctx.accept();
       await runtime?.sendToConversation(ctx.conversationId, renderJoinAccepted(config.projectPath));
     },
@@ -74,13 +82,18 @@ async function main() {
       }
 
       try {
-        await handleConversationMessage(ctx, runtime, daemon, config, controlRoom);
+        await handleConversationMessage(ctx, runtime, daemon, config, roomStore);
         rememberProcessedMessageKey(config.dataDir, processedMessageKeys, messageKey);
       } finally {
         processingMessageKeys.delete(messageKey);
       }
     },
     onStart: (info) => {
+      runtimeInfo = {
+        address: info.address,
+        inboxId: info.inboxId,
+        testUrl: info.testUrl,
+      };
       console.log(`Runtime XMTP address: ${info.address}`);
       console.log(`Runtime inbox: ${info.inboxId}`);
       console.log(`Convos test URL: ${info.testUrl}`);
@@ -92,18 +105,43 @@ async function main() {
 
   controlRoom = await ensureControlRoom(runtime, {
     dataDir: config.dataDir,
+    env: config.xmtpEnv,
     name: config.controlRoomName,
     description: config.controlRoomDescription,
   });
   controlRoom = enrichControlRoomInvite(controlRoom, config.dataDir);
+  roomStore.upsert({
+    kind: "control-room",
+    conversationId: controlRoom.conversationId,
+    name: controlRoom.name,
+    description: controlRoom.description,
+    inviteUrl: controlRoom.inviteUrl,
+    deepLink: controlRoom.deepLink,
+    qrTarget: controlRoom.qrTarget,
+    qrPngPath: controlRoom.qrPngPath,
+  });
+
+  const dashboardServer = startDashboardServer({
+    host: config.dashboardHost,
+    port: config.dashboardPort,
+    projectPath: config.projectPath,
+    roomStore,
+    getRuntimeInfo: () => runtimeInfo,
+    createRoom: async () => {
+      const room = await createManagedRoom(runtime, daemon, config, roomStore, {});
+      return room;
+    },
+  });
 
   printStartupSummary({
     address: runtime.address,
     controlRoom,
+    dashboardUrl: `http://${config.dashboardHost}:${config.dashboardPort}`,
   });
 
   const shutdown = async (signal) => {
     console.log(`Shutting down (${signal})...`);
+    dashboardServer.close();
     await runtime?.stop();
     process.exit(0);
   };
@@ -116,8 +154,9 @@ async function main() {
   });
 }
 
-async function handleConversationMessage(ctx, runtime, daemon, config, controlRoom) {
+async function handleConversationMessage(ctx, runtime, daemon, config, roomStore) {
   const parsed = parseMessageContent(ctx.content);
+  const room = roomStore.getByConversationId(ctx.conversationId);
 
   if (parsed.kind === "ignore") {
     return;
@@ -133,12 +172,16 @@ async function handleConversationMessage(ctx, runtime, daemon, config, controlRo
       daemon.getHealth(),
       daemon.getConversationBinding(ctx.conversationId).catch(() => ({ channel: null, task: null })),
     ]);
+    if (binding) {
+      roomStore.updateBinding(ctx.conversationId, binding);
+    }
+    const nextRoom = roomStore.getByConversationId(ctx.conversationId) || room;
     await runtime.sendToConversation(ctx.conversationId, renderStatus({
       projectPath: config.projectPath,
       conversationId: ctx.conversationId,
-      inviteUrl: controlRoom?.inviteUrl || null,
-      deepLink: controlRoom?.deepLink || null,
-      qrPngPath: controlRoom?.qrPngPath || null,
+      inviteUrl: nextRoom?.inviteUrl || null,
+      deepLink: nextRoom?.deepLink || null,
+      qrPngPath: nextRoom?.qrPngPath || null,
       daemonBaseUrl: config.daemonBaseUrl,
       taskId: binding.task?.taskId || null,
       threadId: binding.task?.threadId || binding.channel?.threadId || null,
@@ -148,10 +191,11 @@ async function handleConversationMessage(ctx, runtime, daemon, config, controlRo
   }
 
   if (parsed.kind === "new-thread") {
-    await daemon.ensureConversationTask(ctx.conversationId, {
+    const binding = await daemon.ensureConversationTask(ctx.conversationId, {
       title: makeTaskTitle(ctx),
       forceNewTask: true,
     });
+    roomStore.updateBinding(ctx.conversationId, binding);
     await runtime.sendToConversation(ctx.conversationId, renderNewThread());
     return;
   }
@@ -172,6 +216,7 @@ async function handleConversationMessage(ctx, runtime, daemon, config, controlRo
   const ensured = await daemon.ensureConversationTask(ctx.conversationId, {
     title: makeTaskTitle(ctx),
   });
+  roomStore.updateBinding(ctx.conversationId, ensured);
   const task = ensured.task;
   if (!task?.taskId) {
     throw new Error("OpenAgent did not return a task for this conversation.");
@@ -214,8 +259,9 @@ function printStartupSummary(input) {
   if (input.controlRoom.qrPngPath) {
     console.log(`QR PNG: ${input.controlRoom.qrPngPath}`);
   }
+  console.log(`Dashboard: ${input.dashboardUrl}`);
   console.log("");
-  qrcode.generate(input.controlRoom.deepLink, { small: true });
+  qrcode.generate(input.controlRoom.qrTarget || input.controlRoom.inviteUrl || input.controlRoom.deepLink, { small: true });
 }
 
 function makeTaskTitle(ctx) {

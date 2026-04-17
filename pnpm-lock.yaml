@@ -16,12 +16,18 @@ importers:
       dotenv:
         specifier: ^16.6.1
         version: 16.6.1
+      protobufjs:
+        specifier: ^8.0.1
+        version: 8.0.1
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0
+      viem:
+        specifier: ^2.48.1
+        version: 2.48.1
 
   apps/obsidian-plugin: {}
 
@@ -233,6 +239,10 @@ packages:
 
   protobufjs@7.5.5:
     resolution: {integrity: sha512-3wY1AxV+VBNW8Yypfd1yQY9pXnqTAN+KwQxL8iYm3/BjKYMNg4i0owhEe26PWDOMaIrzeeF98Lqd5NGz4omiIg==}
+    engines: {node: '>=12.0.0'}
+
+  protobufjs@8.0.1:
+    resolution: {integrity: sha512-NWWCCscLjs+cOKF/s/XVNFRW7Yih0fdH+9brffR5NZCy8k42yRdl5KlWKMVXuI1vfCoy4o1z80XR/W/QUb3V3w==}
     engines: {node: '>=12.0.0'}
 
   qrcode-terminal@0.12.0:
@@ -491,6 +501,21 @@ snapshots:
   pngjs@5.0.0: {}
 
   protobufjs@7.5.5:
+    dependencies:
+      '@protobufjs/aspromise': 1.1.2
+      '@protobufjs/base64': 1.1.2
+      '@protobufjs/codegen': 2.0.4
+      '@protobufjs/eventemitter': 1.1.0
+      '@protobufjs/fetch': 1.1.0
+      '@protobufjs/float': 1.0.2
+      '@protobufjs/inquire': 1.1.0
+      '@protobufjs/path': 1.1.2
+      '@protobufjs/pool': 1.1.0
+      '@protobufjs/utf8': 1.1.0
+      '@types/node': 25.6.0
+      long: 5.3.2
+
+  protobufjs@8.0.1:
     dependencies:
       '@protobufjs/aspromise': 1.1.2
       '@protobufjs/base64': 1.1.2
