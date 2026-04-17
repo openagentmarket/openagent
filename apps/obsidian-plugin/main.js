@@ -2459,7 +2459,17 @@ class OpenAgentView extends ItemView {
       logo.createSpan({ cls: "oa-logo-mark", text: "OA" });
     }
     const brandText = brand.createDiv({ cls: "oa-brand-text" });
-    brandText.createEl("h2", { text: isSettingsScreen ? "Threads" : "OpenAgent" });
+    const brandTitleRow = brandText.createDiv({ cls: "oa-brand-title-row" });
+    brandTitleRow.createEl("h2", { text: isSettingsScreen ? "Threads" : "OpenAgent" });
+    if (this.plugin.getDaemonStatus().state === DAEMON_CONNECTION_STATES.ONLINE) {
+      brandTitleRow.createSpan({
+        cls: "oa-daemon-online-dot",
+        attr: {
+          "aria-label": "Daemon online",
+          title: this.plugin.getDaemonStatusDetail() || "OpenAgent daemon is online.",
+        },
+      });
+    }
     brandText.createDiv({
       cls: "oa-brand-subtitle",
       text: isSettingsScreen
