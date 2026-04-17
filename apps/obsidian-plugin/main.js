@@ -43,6 +43,7 @@ const DEBUG_LOG_RELATIVE_PATH = path.join(".openagent", "new-thread-debug.jsonl"
 const DEV_SMOKE_POLL_MS = 1_000;
 const MAX_DEBUG_EVENTS = 30;
 const RUNNING_TASK_REFRESH_POLL_MS = 1_500;
+const DAEMON_STATUS_POLL_MS = 10_000;
 const RESULT_NODE_Y_GAP = 40;
 const RESULT_NODE_MIN_HEIGHT = 160;
 const RESULT_NODE_MAX_HEIGHT = 520;
@@ -74,6 +75,12 @@ const PANEL_TAB_OPTIONS = Object.freeze({
   TASK_LIST: "task-list",
   ARCHIVED_TASK_LIST: "archived-task-list",
   DEBUG: "debug",
+});
+const DAEMON_CONNECTION_STATES = Object.freeze({
+  UNKNOWN: "unknown",
+  CHECKING: "checking",
+  ONLINE: "online",
+  OFFLINE: "offline",
 });
 
 function sleep(ms) {
@@ -119,6 +126,56 @@ function normalizePanelTab(value) {
 
 function normalizePromptPath(value) {
   return String(value || "").trim().replace(/\\/g, "/");
+}
+
+function createDaemonStatusSnapshot(overrides = {}) {
+  return {
+    state: DAEMON_CONNECTION_STATES.UNKNOWN,
+    checkedAt: 0,
+    host: "",
+    port: "",
+    error: "",
+    runtimeAvailable: null,
+    runtimeMessage: "",
+    lastRuntimeError: "",
+    ...overrides,
+  };
+}
+
+function formatDaemonCheckedAt(value) {
+  const timestamp = Number(value) || 0;
+  if (!timestamp) {
+    return "";
+  }
+
+  try {
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function getDaemonEndpointLabel(status) {
+  const host = String(status?.host || "").trim();
+  const port = String(status?.port || "").trim();
+  return host && port ? `${host}:${port}` : "";
+}
+
+function getDaemonStatusTagClassName(state) {
+  switch (state) {
+    case DAEMON_CONNECTION_STATES.ONLINE:
+      return "is-online";
+    case DAEMON_CONNECTION_STATES.OFFLINE:
+      return "is-offline";
+    case DAEMON_CONNECTION_STATES.CHECKING:
+      return "is-checking";
+    default:
+      return "";
+  }
 }
 
 function isPathInsideDirectory(candidatePath, directoryPath) {
@@ -1053,6 +1110,13 @@ class OpenAgentApiClient {
 
   getHealth() {
     return this.request("GET", "/health");
+  }
+
+  getHealthOnce(options = {}) {
+    if (options.reloadConfig === true) {
+      this.config = null;
+    }
+    return this.requestOnce("GET", "/health");
   }
 
   getTasks() {
@@ -2450,6 +2514,40 @@ class OpenAgentView extends ItemView {
       const chooseWorkspaceButton = this.makeButton(workspaceActions, "New workspace", () => this.plugin.showWorkspacePicker());
       chooseWorkspaceButton.setCta();
 
+      const daemonBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
+      daemonBlock.createEl("h3", {
+        cls: "oa-settings-section-title",
+        text: "Daemon",
+      });
+      const daemonSection = daemonBlock.createDiv({ cls: "oa-settings-section oa-settings-card" });
+      const daemonSummary = daemonSection.createDiv({ cls: "oa-settings-list" });
+      const daemonRow = daemonSummary.createDiv({ cls: "oa-settings-row" });
+      daemonRow.createDiv({ cls: "oa-settings-label", text: "Connection" });
+      const daemonValue = daemonRow.createDiv({ cls: "oa-settings-value oa-settings-value-stack" });
+      daemonValue.createDiv({
+        cls: `oa-status-tag ${this.plugin.getDaemonStatusTagClassName()}`.trim(),
+        text: this.plugin.getDaemonStatusLabel(),
+      });
+      daemonValue.createDiv({
+        cls: "oa-task-meta",
+        text: this.plugin.getDaemonStatusDetail() || "Checks whether the local OpenAgent daemon responds to /health.",
+      });
+
+      const daemonActions = daemonSection.createDiv({ cls: "oa-action-row" });
+      this.makeButton(daemonActions, "Refresh", () => {
+        void this.plugin.refreshDaemonStatus({
+          silent: false,
+          forceRefresh: true,
+        });
+      }, false, {
+        runOnMouseDown: true,
+      });
+      this.makeButton(daemonActions, "Start daemon", () => {
+        void this.plugin.startDaemonWithFeedback();
+      }, false, {
+        runOnMouseDown: true,
+      });
+
       const threadsBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
       const threadsHeader = threadsBlock.createDiv({ cls: "oa-settings-section-header" });
       threadsHeader.createEl("h3", {
@@ -2832,6 +2930,25 @@ class OpenAgentSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName(`Daemon status: ${this.plugin.getDaemonStatusLabel()}`)
+      .setDesc(this.plugin.getDaemonStatusDetail() || "Checks whether the local OpenAgent daemon responds to /health.")
+      .addButton((button) => {
+        button.setButtonText("Refresh");
+        button.onClick(async () => {
+          await this.plugin.refreshDaemonStatus({
+            silent: false,
+            forceRefresh: true,
+          });
+        });
+      })
+      .addButton((button) => {
+        button.setButtonText("Start");
+        button.onClick(async () => {
+          await this.plugin.startDaemonWithFeedback();
+        });
+      });
+
+    new Setting(containerEl)
       .setName("Codex sandbox mode")
       .setDesc("Choose how much access turns launched from this plugin get. Workspace-only stays inside the selected project folder. Full access removes the filesystem sandbox and should only be used for trusted work.")
       .addDropdown((dropdown) => {
@@ -2867,12 +2984,7 @@ class OpenAgentSettingTab extends PluginSettingTab {
       .addButton((button) => {
         button.setButtonText("Start");
         button.onClick(async () => {
-          try {
-            await this.plugin.daemonLauncher.ensureStarted();
-            new Notice("OpenAgent daemon is running.");
-          } catch (error) {
-            new Notice(String(error?.message || error));
-          }
+          await this.plugin.startDaemonWithFeedback();
         });
       });
 
@@ -2940,6 +3052,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.logoLoadPromise = null;
     this.debugEvents = [];
     this.devSmokePollIntervalId = null;
+    this.daemonStatus = createDaemonStatusSnapshot({
+      state: DAEMON_CONNECTION_STATES.CHECKING,
+    });
+    this.daemonStatusRefreshPromise = null;
+    this.settingTab = null;
     this.resultNodeSyncStateByTaskId = normalizeResultNodeSyncState(
       savedSyncState.resultNodeSyncStateByTaskId
       || savedState.uiState?.resultNodeSyncStateByTaskId
@@ -2970,7 +3087,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.selectedGroupContextPreviewLoadPromise = null;
 
     this.registerView(VIEW_TYPE, (leaf) => new OpenAgentView(leaf, this));
-    this.addSettingTab(new OpenAgentSettingTab(this.app, this));
+    this.settingTab = new OpenAgentSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
     this.registerInterval(window.setInterval(() => {
       this.captureCanvasSelectionSnapshot();
     }, SELECTION_SNAPSHOT_POLL_MS));
@@ -2978,6 +3096,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.registerInterval(window.setInterval(() => {
       void this.refreshRunningTasks();
     }, RUNNING_TASK_REFRESH_POLL_MS));
+    this.registerInterval(window.setInterval(() => {
+      void this.refreshDaemonStatus({
+        silent: true,
+      });
+    }, DAEMON_STATUS_POLL_MS));
     this.registerEvent(this.app.vault.on("create", (file) => {
       this.handleWorkspaceConfigMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
@@ -3051,15 +3174,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.addCommand({
       id: "openagent-start-daemon",
       name: "Start daemon",
-      callback: async () => {
-        try {
-          await this.daemonLauncher.ensureStarted();
-          new Notice("OpenAgent daemon is running.");
-        } catch (error) {
-          this.runtimeIssue = String(error?.message || error);
-          new Notice(this.runtimeIssue);
-          this.requestViewRefresh();
-        }
+      callback: () => {
+        void this.startDaemonWithFeedback();
       },
     });
 
@@ -3068,6 +3184,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
     void this.ensureWorkspaceSummariesLoaded();
     void this.ensurePluginLogoDataUrlLoaded();
+    void this.refreshDaemonStatus();
     void this.refreshTasks().catch(() => {});
   }
 
@@ -3164,6 +3281,202 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     return path.join(adapter.getBasePath(), manifestDir, fileName);
+  }
+
+  refreshSettingTab() {
+    if (!this.settingTab?.containerEl?.isConnected || typeof this.settingTab.display !== "function") {
+      return;
+    }
+
+    this.settingTab.display();
+  }
+
+  getStoredDaemonConfigSummary() {
+    try {
+      if (!fs.existsSync(DAEMON_CONFIG_PATH)) {
+        return {
+          host: "",
+          port: "",
+        };
+      }
+
+      const parsed = JSON.parse(fs.readFileSync(DAEMON_CONFIG_PATH, "utf8"));
+      return {
+        host: String(parsed?.host || "").trim(),
+        port: String(parsed?.port || "").trim(),
+      };
+    } catch {
+      return {
+        host: "",
+        port: "",
+      };
+    }
+  }
+
+  updateDaemonStatus(nextStatus, options = {}) {
+    const previousStatus = this.daemonStatus || createDaemonStatusSnapshot();
+    const normalizedStatus = createDaemonStatusSnapshot(nextStatus);
+    const didChange = [
+      "state",
+      "host",
+      "port",
+      "error",
+      "runtimeAvailable",
+      "runtimeMessage",
+      "lastRuntimeError",
+    ].some((key) => previousStatus[key] !== normalizedStatus[key]);
+    this.daemonStatus = normalizedStatus;
+
+    if (didChange || options.forceRefresh === true) {
+      this.requestViewRefresh();
+      this.refreshSettingTab();
+    }
+  }
+
+  getDaemonStatus() {
+    return this.daemonStatus || createDaemonStatusSnapshot();
+  }
+
+  getDaemonStatusLabel() {
+    const state = this.getDaemonStatus().state;
+    if (state === DAEMON_CONNECTION_STATES.ONLINE) {
+      return "Online";
+    }
+    if (state === DAEMON_CONNECTION_STATES.OFFLINE) {
+      return "Offline";
+    }
+    if (state === DAEMON_CONNECTION_STATES.CHECKING) {
+      return "Checking...";
+    }
+    return "Unknown";
+  }
+
+  getDaemonStatusTagClassName() {
+    return getDaemonStatusTagClassName(this.getDaemonStatus().state);
+  }
+
+  getDaemonStatusDetail() {
+    const status = this.getDaemonStatus();
+    const endpoint = getDaemonEndpointLabel(status);
+    const checkedAt = formatDaemonCheckedAt(status.checkedAt);
+    const parts = [];
+
+    if (status.state === DAEMON_CONNECTION_STATES.ONLINE) {
+      if (endpoint) {
+        parts.push(`Listening on ${endpoint}`);
+      }
+      if (status.runtimeAvailable === true) {
+        parts.push("Codex runtime ready");
+      } else if (status.runtimeMessage) {
+        parts.push(status.runtimeMessage);
+      }
+      if (status.lastRuntimeError) {
+        parts.push(`Last runtime error: ${status.lastRuntimeError}`);
+      }
+    } else if (status.state === DAEMON_CONNECTION_STATES.OFFLINE) {
+      if (status.error) {
+        parts.push(status.error);
+      } else {
+        parts.push("OpenAgent daemon is not responding.");
+      }
+      if (endpoint) {
+        parts.push(`Expected ${endpoint}`);
+      }
+    } else if (status.state === DAEMON_CONNECTION_STATES.CHECKING) {
+      parts.push(endpoint ? `Checking ${endpoint}` : "Checking the local daemon");
+    } else {
+      parts.push("Status has not been checked yet.");
+    }
+
+    if (checkedAt) {
+      parts.push(`Checked ${checkedAt}`);
+    }
+
+    return parts.join(" - ");
+  }
+
+  async refreshDaemonStatus(options = {}) {
+    if (this.daemonStatusRefreshPromise) {
+      if (options.forceRefresh === true) {
+        this.requestViewRefresh();
+        this.refreshSettingTab();
+      }
+      return this.daemonStatusRefreshPromise;
+    }
+
+    const storedConfig = this.getStoredDaemonConfigSummary();
+    if (options.silent !== true) {
+      this.updateDaemonStatus({
+        ...this.getDaemonStatus(),
+        ...storedConfig,
+        state: DAEMON_CONNECTION_STATES.CHECKING,
+        error: "",
+      }, {
+        forceRefresh: true,
+      });
+    }
+
+    this.daemonStatusRefreshPromise = this.api.getHealthOnce({
+      reloadConfig: true,
+    })
+      .then((health) => {
+        this.updateDaemonStatus({
+          state: DAEMON_CONNECTION_STATES.ONLINE,
+          checkedAt: Date.now(),
+          host: String(health?.daemon?.host || storedConfig.host || "").trim(),
+          port: String(health?.daemon?.port || storedConfig.port || "").trim(),
+          error: "",
+          runtimeAvailable: typeof health?.runtime?.ok === "boolean" ? health.runtime.ok : null,
+          runtimeMessage: String(health?.runtime?.message || "").trim(),
+          lastRuntimeError: String(health?.lastRuntimeError || "").trim(),
+        }, {
+          forceRefresh: options.forceRefresh === true,
+        });
+        return this.getDaemonStatus();
+      })
+      .catch((error) => {
+        this.updateDaemonStatus({
+          state: DAEMON_CONNECTION_STATES.OFFLINE,
+          checkedAt: Date.now(),
+          host: storedConfig.host,
+          port: storedConfig.port,
+          error: String(error?.message || error),
+          runtimeAvailable: null,
+          runtimeMessage: "",
+          lastRuntimeError: "",
+        }, {
+          forceRefresh: options.forceRefresh === true || options.silent !== true,
+        });
+        return this.getDaemonStatus();
+      })
+      .finally(() => {
+        this.daemonStatusRefreshPromise = null;
+      });
+
+    return this.daemonStatusRefreshPromise;
+  }
+
+  async startDaemonWithFeedback() {
+    try {
+      await this.daemonLauncher.ensureStarted();
+      this.runtimeIssue = "";
+      await this.refreshDaemonStatus({
+        silent: false,
+        forceRefresh: true,
+      });
+      new Notice("OpenAgent daemon is running.");
+      return true;
+    } catch (error) {
+      this.runtimeIssue = String(error?.message || error);
+      await this.refreshDaemonStatus({
+        silent: false,
+        forceRefresh: true,
+      }).catch(() => {});
+      new Notice(this.runtimeIssue);
+      this.requestViewRefresh();
+      this.refreshSettingTab();
+      return false;
+    }
   }
 
   async pickDirectoryPath(options = {}) {

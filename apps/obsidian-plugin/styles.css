@@ -349,6 +349,24 @@
   color: var(--text-normal);
 }
 
+.oa-status-tag.is-online {
+  border-color: color-mix(in srgb, var(--color-green) 42%, transparent);
+  background: color-mix(in srgb, var(--color-green) 14%, transparent);
+  color: var(--text-normal);
+}
+
+.oa-status-tag.is-offline {
+  border-color: color-mix(in srgb, var(--color-red) 42%, transparent);
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  color: var(--text-normal);
+}
+
+.oa-status-tag.is-checking {
+  border-color: color-mix(in srgb, var(--interactive-accent) 36%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  color: var(--text-normal);
+}
+
 .oa-task-meta,
 .oa-message-label,
 .oa-muted {
@@ -776,6 +794,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.oa-settings-value-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .oa-settings-value-path {
