@@ -65,6 +65,7 @@ When a task completes, the plugin writes the assistant result back into the Canv
 The plugin currently registers these commands:
 
 - `OpenAgent: New thread from selection`
+- `OpenAgent: Create follow-up node`
 - `OpenAgent: Choose workspace`
 - `OpenAgent: Open tasks`
 - `OpenAgent: Resume last task`
@@ -145,6 +146,8 @@ The plugin also writes the final answer back into the Canvas so the graph stays 
 ### 5. Continue with a Follow-up
 
 Add a new text node connected to the previous result node and run `OpenAgent: New thread from selection` again on the follow-up node.
+
+You can also run `OpenAgent: Create follow-up node` and bind it to a hotkey. The command creates the follow-up text node and links it to the selected OpenAgent source or result node for you.
 
 OpenAgent will try to reuse the same daemon task and Codex thread while changing the active source node for result sync.
 

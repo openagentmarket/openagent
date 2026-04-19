@@ -51,6 +51,7 @@ const RESULT_NODE_DEFAULT_WIDTH = 420;
 const RESULT_NODE_MIN_WIDTH = 320;
 const RESULT_NODE_MAX_WIDTH = 720;
 const RESULT_NODE_CHARS_PER_LINE = 52;
+const FOLLOW_UP_NODE_DEFAULT_HEIGHT = 120;
 const CANVAS_LAYOUT_BASE_X = 80;
 const CANVAS_LAYOUT_BASE_Y = 80;
 const CANVAS_LAYOUT_X_GAP = 180;
@@ -349,6 +350,15 @@ function inferWorkspaceNameFromRepoPath(repoPath) {
 
 function stableShortHash(value) {
   return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex").slice(0, 16);
+}
+
+function createCanvasObjectId(prefix = "oa-canvas") {
+  const normalizedPrefix = String(prefix || "oa-canvas").trim() || "oa-canvas";
+  if (typeof crypto.randomUUID === "function") {
+    return `${normalizedPrefix}-${crypto.randomUUID()}`;
+  }
+
+  return `${normalizedPrefix}-${stableShortHash(`${Date.now()}\0${Math.random().toString(16)}`)}`;
 }
 
 function buildTaskResultNodeId(taskId, sourceNodeId) {
@@ -3198,6 +3208,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "openagent-create-follow-up-node",
+      name: "Create follow-up node",
+      callback: () => {
+        void this.handleCreateFollowUpNodeCommand();
+      },
+    });
+
     this.app.workspace.onLayoutReady(() => {
       void this.ensurePanelVisibleOnStartup();
     });
@@ -3732,8 +3750,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
             "",
             "- One text node = one prompt/thread",
             "- Run: OpenAgent: New thread from selection",
+            "- Shortcut helper: OpenAgent: Create follow-up node",
             "- Optional context: markdown file nodes, or markdown files in the same group",
-            "- Follow-up: connect a new text node to a previous result node, then run again",
+            "- Follow-up: create a follow-up node from a previous OpenAgent node, then run again",
             "- OpenAgent writes the answer back to the canvas",
           ].join("\n"),
         },
@@ -4410,6 +4429,178 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return {
       task: this.mergeTask(response.task),
       message: followUpTarget.message,
+    };
+  }
+
+  async handleCreateFollowUpNodeCommand() {
+    try {
+      const result = await this.createFollowUpNodeFromSelection();
+      this.runtimeIssue = "";
+      this.rememberSelectionSnapshot({
+        canvasPath: result.canvasPath,
+        nodeIds: [result.followUpNodeId],
+      });
+      await this.appendDebugEvent("canvas_follow_up_node_created", {
+        canvasPath: result.canvasPath,
+        selectedNodeId: result.selectedNodeId,
+        anchorNodeId: result.anchorNodeId,
+        followUpNodeId: result.followUpNodeId,
+      });
+      new Notice("Created a follow-up node. Select it, type your next request, then run OpenAgent: New thread from selection.");
+    } catch (error) {
+      this.runtimeIssue = String(error?.message || error);
+      await this.appendDebugEvent("canvas_follow_up_node_error", {
+        message: this.runtimeIssue,
+      });
+      new Notice(this.runtimeIssue);
+      this.requestViewRefresh({ force: true });
+    }
+  }
+
+  async createFollowUpNodeFromSelection() {
+    const view = this.resolver.getActiveCanvasView();
+    if (!view) {
+      throw new Error("Open a Canvas view first.");
+    }
+
+    const file = view.file || this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile) || file.extension !== "canvas") {
+      throw new Error("The active view is not backed by a .canvas file.");
+    }
+
+    const selectedNodeIds = this.resolver.extractSelectedNodeIds(view).map((nodeId) => String(nodeId)).filter(Boolean);
+    if (selectedNodeIds.length !== 1) {
+      throw new Error("Select exactly one OpenAgent source or result node first.");
+    }
+
+    await this.resolver.flushPendingCanvasEdits(view);
+    const selectedNodeId = selectedNodeIds[0];
+    const result = await this.withSerializedCanvasMutation(file.path, async () => {
+      const raw = await this.app.vault.cachedRead(file);
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new Error(`Unable to parse canvas JSON for ${file.path}`);
+      }
+
+      const nodes = Array.isArray(parsed?.nodes) ? [...parsed.nodes] : [];
+      const edges = Array.isArray(parsed?.edges) ? [...parsed.edges] : [];
+      const nodeById = new Map(
+        nodes
+          .map((node) => [String(node?.id || "").trim(), node])
+          .filter(([nodeId]) => nodeId)
+      );
+      const selectedNode = nodeById.get(selectedNodeId) || null;
+      if (!selectedNode) {
+        throw new Error("The selected Canvas node could not be found.");
+      }
+
+      const anchor = this.resolveFollowUpAnchorForSelectedNode(file.path, selectedNodeId, nodeById);
+      const followUpNodeId = createCanvasObjectId("oa-follow-up");
+      const followUpNode = this.buildCanvasFollowUpNode(anchor.anchorNode, followUpNodeId, edges, nodeById);
+      const followUpEdge = {
+        id: createCanvasObjectId("oa-follow-up-edge"),
+        fromNode: anchor.anchorNodeId,
+        toNode: followUpNodeId,
+        fromSide: "right",
+        toSide: "left",
+      };
+
+      const nextParsed = {
+        ...parsed,
+        nodes: [...nodes, followUpNode],
+        edges: [...edges, followUpEdge],
+      };
+      await this.app.vault.modify(file, JSON.stringify(nextParsed, null, 2) + "\n");
+      this.primeCanvasSnapshot(file.path, nextParsed);
+      return {
+        canvasPath: file.path,
+        selectedNodeId,
+        anchorNodeId: anchor.anchorNodeId,
+        followUpNodeId,
+      };
+    });
+
+    this.scheduleCanvasNodeHighlightSync(file.path);
+    this.requestViewRefresh({ force: true });
+    return result;
+  }
+
+  resolveFollowUpAnchorForSelectedNode(canvasPath, selectedNodeId, nodeById) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    const normalizedNodeId = String(selectedNodeId || "").trim();
+    const selectedNode = nodeById?.get(normalizedNodeId) || null;
+    if (!normalizedCanvasPath || !normalizedNodeId || !selectedNode) {
+      throw new Error("The selected Canvas node could not be found.");
+    }
+
+    if (isOpenAgentAssistantResultNode(selectedNode)) {
+      const task = this.findTaskByOpenAgentResultNode(normalizedCanvasPath, normalizedNodeId);
+      if (!task) {
+        throw new Error("Select an existing OpenAgent source or result node first.");
+      }
+
+      return {
+        task,
+        anchorNodeId: normalizedNodeId,
+        anchorNode: selectedNode,
+      };
+    }
+
+    const task = this.findTaskByCanvasRunSourceNode(normalizedCanvasPath, normalizedNodeId)
+      || this.findTaskByRootCanvasNode(normalizedCanvasPath, normalizedNodeId);
+    if (!task) {
+      throw new Error("Select an existing OpenAgent source or result node first.");
+    }
+
+    const resultNodeId = String(
+      task?.canvasBinding?.resultNodesBySourceNodeId?.[normalizedNodeId]?.resultNodeId
+      || buildTaskResultNodeId(task.taskId, normalizedNodeId)
+    ).trim();
+    const resultNode = resultNodeId ? nodeById?.get(resultNodeId) || null : null;
+    if (resultNode && isOpenAgentAssistantResultNode(resultNode)) {
+      return {
+        task,
+        anchorNodeId: resultNodeId,
+        anchorNode: resultNode,
+      };
+    }
+
+    return {
+      task,
+      anchorNodeId: normalizedNodeId,
+      anchorNode: selectedNode,
+    };
+  }
+
+  buildCanvasFollowUpNode(anchorNode, followUpNodeId, edges, nodeById) {
+    const width = clampNumber(
+      toFiniteNumber(anchorNode?.width, RESULT_NODE_DEFAULT_WIDTH),
+      RESULT_NODE_MIN_WIDTH,
+      RESULT_NODE_MAX_WIDTH
+    );
+    const x = toFiniteNumber(anchorNode?.x, 0) + toFiniteNumber(anchorNode?.width, width) + CANVAS_LAYOUT_X_GAP;
+    const childNodes = (Array.isArray(edges) ? edges : [])
+      .filter((edge) => String(edge?.fromNode || "").trim() === String(anchorNode?.id || "").trim())
+      .map((edge) => nodeById?.get(String(edge?.toNode || "").trim()) || null)
+      .filter(Boolean)
+      .filter((node) => !isOpenAgentAssistantResultNode(node));
+    const y = childNodes.length > 0
+      ? childNodes.reduce((maxY, node) => {
+          const nextBottom = toFiniteNumber(node?.y, 0) + toFiniteNumber(node?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT);
+          return Math.max(maxY, nextBottom + RESULT_NODE_Y_GAP);
+        }, toFiniteNumber(anchorNode?.y, 0))
+      : toFiniteNumber(anchorNode?.y, 0);
+
+    return {
+      id: followUpNodeId,
+      type: "text",
+      x,
+      y,
+      width,
+      height: FOLLOW_UP_NODE_DEFAULT_HEIGHT,
+      text: "",
     };
   }
 
