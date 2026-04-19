@@ -3342,6 +3342,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.activeStreamReconnectTimer = null;
     this.activeStreamTaskId = "";
     this.activeStreamSessionId = 0;
+    this.runningTaskStreamDisposers = new Map();
+    this.runningTaskStreamReconnectTimers = new Map();
+    this.runningTaskStreamSessionIds = {};
     this.lastCanvasSelectionSnapshot = null;
     this.devSmokeRunPromise = null;
     this.lastProcessedSmokeRequestId = "";
@@ -3493,6 +3496,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   async onunload() {
     this.disposeActiveStream();
+    this.disposeAllRunningTaskStreams();
     try {
       await this.persistPluginState();
     } catch {
@@ -5324,6 +5328,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.syncActiveTaskToCanvasContext();
     this.maybeSyncCanvasNodeHighlights(nextTask, previousTask);
     this.maybeSyncTaskResultNode(nextTask, previousTask);
+    this.reconcileRunningTaskStreams();
     return nextTask;
   }
 
@@ -6156,6 +6161,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         this.maybeSyncCanvasNodeHighlights(task, previousTask);
         this.maybeSyncTaskResultNode(task, previousTask);
       });
+      this.reconcileRunningTaskStreams();
       this.reconcileAllCanvasNodeHighlights();
 
       await this.persistPluginState();
@@ -6220,6 +6226,162 @@ module.exports = class OpenAgentPlugin extends Plugin {
     if (typeof disposer === "function") {
       disposer();
     }
+  }
+
+  clearRunningTaskStreamReconnectTimer(taskId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    const existingTimer = normalizedTaskId ? this.runningTaskStreamReconnectTimers.get(normalizedTaskId) : null;
+    if (existingTimer != null) {
+      window.clearTimeout(existingTimer);
+      this.runningTaskStreamReconnectTimers.delete(normalizedTaskId);
+    }
+  }
+
+  disposeRunningTaskStream(taskId, options = {}) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId) {
+      return;
+    }
+
+    this.clearRunningTaskStreamReconnectTimer(normalizedTaskId);
+    const disposer = this.runningTaskStreamDisposers.get(normalizedTaskId) || null;
+    this.runningTaskStreamDisposers.delete(normalizedTaskId);
+    if (options.clearSession !== false) {
+      delete this.runningTaskStreamSessionIds[normalizedTaskId];
+    }
+    if (typeof disposer === "function") {
+      disposer();
+    }
+  }
+
+  disposeAllRunningTaskStreams() {
+    Array.from(new Set([
+      ...this.runningTaskStreamDisposers.keys(),
+      ...this.runningTaskStreamReconnectTimers.keys(),
+      ...Object.keys(this.runningTaskStreamSessionIds || {}),
+    ])).forEach((taskId) => {
+      this.disposeRunningTaskStream(taskId);
+    });
+  }
+
+  shouldWatchRunningTaskStream(taskId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId || normalizedTaskId === String(this.activeStreamTaskId || "").trim()) {
+      return false;
+    }
+
+    const task = this.tasksById[normalizedTaskId] || null;
+    return Boolean(task) && this.isTaskRunning(task);
+  }
+
+  isRunningTaskStreamSessionCurrent(taskId, sessionId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    return Boolean(normalizedTaskId)
+      && this.shouldWatchRunningTaskStream(normalizedTaskId)
+      && Number(this.runningTaskStreamSessionIds[normalizedTaskId] || 0) === Number(sessionId || 0);
+  }
+
+  scheduleRunningTaskStreamReconnect(taskId, sessionId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!this.isRunningTaskStreamSessionCurrent(normalizedTaskId, sessionId)) {
+      return;
+    }
+
+    this.clearRunningTaskStreamReconnectTimer(normalizedTaskId);
+    const timer = window.setTimeout(() => {
+      this.runningTaskStreamReconnectTimers.delete(normalizedTaskId);
+      if (!this.isRunningTaskStreamSessionCurrent(normalizedTaskId, sessionId)) {
+        return;
+      }
+
+      this.connectRunningTaskStream(normalizedTaskId, sessionId);
+    }, ACTIVE_TASK_STREAM_RECONNECT_DELAY_MS);
+    this.runningTaskStreamReconnectTimers.set(normalizedTaskId, timer);
+  }
+
+  connectRunningTaskStream(taskId, sessionId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!this.isRunningTaskStreamSessionCurrent(normalizedTaskId, sessionId)) {
+      return;
+    }
+
+    try {
+      this.runningTaskStreamDisposers.set(normalizedTaskId, this.api.openTaskStream(normalizedTaskId, {
+        onEvent: (_event, payload) => {
+          if (!this.isRunningTaskStreamSessionCurrent(normalizedTaskId, sessionId)) {
+            return;
+          }
+
+          if (payload?.task) {
+            this.runtimeIssue = "";
+            this.mergeTask(payload.task);
+            this.requestViewRefresh();
+          }
+        },
+        onClose: () => {
+          if (!this.isRunningTaskStreamSessionCurrent(normalizedTaskId, sessionId)) {
+            return;
+          }
+
+          this.runningTaskStreamDisposers.delete(normalizedTaskId);
+          void this.refreshTask(normalizedTaskId, { force: true })
+            .catch(() => {})
+            .finally(() => {
+              this.scheduleRunningTaskStreamReconnect(normalizedTaskId, sessionId);
+            });
+        },
+      }));
+    } catch (error) {
+      if (!this.isRunningTaskStreamSessionCurrent(normalizedTaskId, sessionId)) {
+        return;
+      }
+
+      this.runtimeIssue = String(error?.message || error);
+      this.requestViewRefresh();
+      this.scheduleRunningTaskStreamReconnect(normalizedTaskId, sessionId);
+    }
+  }
+
+  ensureRunningTaskStream(taskId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!this.shouldWatchRunningTaskStream(normalizedTaskId)) {
+      this.disposeRunningTaskStream(normalizedTaskId);
+      return;
+    }
+
+    if (
+      this.runningTaskStreamDisposers.has(normalizedTaskId)
+      || this.runningTaskStreamReconnectTimers.has(normalizedTaskId)
+    ) {
+      return;
+    }
+
+    const nextSessionId = Number(this.runningTaskStreamSessionIds[normalizedTaskId] || 0) + 1;
+    this.runningTaskStreamSessionIds[normalizedTaskId] = nextSessionId;
+    this.connectRunningTaskStream(normalizedTaskId, nextSessionId);
+  }
+
+  reconcileRunningTaskStreams() {
+    const watchedTaskIds = new Set(
+      this.getTasks()
+        .filter((task) => this.shouldWatchRunningTaskStream(task?.taskId))
+        .map((task) => String(task.taskId || "").trim())
+        .filter(Boolean)
+    );
+
+    Array.from(new Set([
+      ...this.runningTaskStreamDisposers.keys(),
+      ...this.runningTaskStreamReconnectTimers.keys(),
+      ...Object.keys(this.runningTaskStreamSessionIds || {}),
+    ])).forEach((taskId) => {
+      if (!watchedTaskIds.has(taskId)) {
+        this.disposeRunningTaskStream(taskId);
+      }
+    });
+
+    watchedTaskIds.forEach((taskId) => {
+      this.ensureRunningTaskStream(taskId);
+    });
   }
 
   isActiveStreamSessionCurrent(taskId, sessionId) {
@@ -6291,12 +6453,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
   subscribeToTask(taskId) {
     this.disposeActiveStream();
     if (!taskId) {
+      this.reconcileRunningTaskStreams();
       return;
     }
 
     this.activeStreamTaskId = String(taskId || "").trim();
     this.activeStreamSessionId += 1;
     this.connectActiveTaskStream(this.activeStreamTaskId, this.activeStreamSessionId);
+    this.reconcileRunningTaskStreams();
   }
 
   async setActiveTask(taskId, options = {}) {
@@ -7309,6 +7473,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     } else {
       this.disposeActiveStream();
     }
+    this.reconcileRunningTaskStreams();
     this.requestViewRefresh();
   }
 
