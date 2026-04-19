@@ -2694,7 +2694,15 @@ class OpenAgentView extends ItemView {
 
     const messagesSection = detail.createDiv({ cls: "oa-messages-section" });
     const messages = Array.isArray(activeTask.messages) ? activeTask.messages : [];
-    if (messages.length === 0) {
+    const messagesLoaded = this.plugin.taskHasLoadedMessages(activeTask);
+    const messageCount = Math.max(Number(activeTask.messageCount) || 0, messages.length);
+    if (!messagesLoaded && messageCount > 0) {
+      messagesSection.createDiv({
+        cls: "oa-muted",
+        text: `Loading conversation (${messageCount} messages)...`,
+      });
+      this.restorePanelScrollState(panelScrollState, panelScrollKey);
+    } else if (messages.length === 0) {
       messagesSection.createDiv({ cls: "oa-muted", text: "No conversation yet." });
       this.restorePanelScrollState(panelScrollState, panelScrollKey);
     } else {
@@ -3084,6 +3092,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.canvasNodeHighlightSyncPending = new Set();
     this.canvasAutoRunInFlightByKey = new Set();
     this.runningTaskRefreshInFlight = new Set();
+    this.taskDetailRefreshInFlight = new Set();
     this.composerFocused = false;
     this.pendingViewRefresh = false;
     this.workspaceSummaryCacheByConfigPath = new Map();
@@ -4829,11 +4838,51 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     const previousTask = this.tasksById[task.taskId] || null;
-    this.tasksById[task.taskId] = task;
+    const nextTask = this.normalizeTaskForStore(task, previousTask);
+    this.tasksById[nextTask.taskId] = nextTask;
     this.syncActiveTaskToCanvasContext();
-    this.maybeSyncCanvasNodeHighlights(task, previousTask);
-    this.maybeSyncTaskResultNode(task, previousTask);
-    return task;
+    this.maybeSyncCanvasNodeHighlights(nextTask, previousTask);
+    this.maybeSyncTaskResultNode(nextTask, previousTask);
+    return nextTask;
+  }
+
+  taskHasLoadedMessages(task) {
+    return Boolean(task) && task.messagesIncluded !== false;
+  }
+
+  normalizeTaskForStore(task, previousTask = null) {
+    if (!task?.taskId) {
+      return null;
+    }
+
+    const nextTask = {
+      ...task,
+    };
+    const shouldReuseDetailedMessages = (
+      nextTask.messagesIncluded === false
+      && previousTask
+      && previousTask.messagesIncluded !== false
+      && String(previousTask.taskId || "") === String(this.uiState?.activeTaskId || "")
+      && Array.isArray(previousTask.messages)
+    );
+
+    if (shouldReuseDetailedMessages) {
+      nextTask.messages = previousTask.messages;
+      nextTask.messagesIncluded = true;
+    } else {
+      nextTask.messages = Array.isArray(task.messages) ? task.messages : [];
+      nextTask.messagesIncluded = task.messagesIncluded !== false;
+    }
+
+    if (typeof nextTask.messageCount !== "number") {
+      nextTask.messageCount = nextTask.messages.length;
+    }
+
+    if (!nextTask.latestAssistantMessage && previousTask?.latestAssistantMessage) {
+      nextTask.latestAssistantMessage = previousTask.latestAssistantMessage;
+    }
+
+    return nextTask;
   }
 
   getLatestAssistantMessage(task) {
@@ -4847,6 +4896,15 @@ module.exports = class OpenAgentPlugin extends Plugin {
           text,
         };
       }
+    }
+
+    const latestAssistantMessage = task?.latestAssistantMessage;
+    const text = String(latestAssistantMessage?.text || "");
+    if (text.trim()) {
+      return {
+        ...latestAssistantMessage,
+        text,
+      };
     }
 
     return null;
@@ -5287,15 +5345,38 @@ module.exports = class OpenAgentPlugin extends Plugin {
     try {
       const response = await this.api.getTasks();
       this.runtimeIssue = "";
-      this.tasksById = {};
-      for (const task of response.tasks || []) {
-        this.mergeTask(task);
+      const previousTasksById = this.tasksById;
+      const nextTasksById = {};
+
+      for (const rawTask of response.tasks || []) {
+        const taskId = String(rawTask?.taskId || "").trim();
+        if (!taskId) {
+          continue;
+        }
+
+        const nextTask = this.normalizeTaskForStore(rawTask, previousTasksById[taskId] || null);
+        if (!nextTask) {
+          continue;
+        }
+
+        nextTasksById[taskId] = nextTask;
       }
+
+      this.tasksById = nextTasksById;
       this.syncActiveTaskToCanvasContext();
+      Object.values(this.tasksById).forEach((task) => {
+        const previousTask = previousTasksById[task.taskId] || null;
+        this.maybeSyncCanvasNodeHighlights(task, previousTask);
+        this.maybeSyncTaskResultNode(task, previousTask);
+      });
       this.reconcileAllCanvasNodeHighlights();
 
       await this.persistPluginState();
       this.requestViewRefresh();
+      const activeTask = this.getActiveTask();
+      if (activeTask && !this.taskHasLoadedMessages(activeTask)) {
+        void this.hydrateTaskDetails(activeTask.taskId, { force: true });
+      }
     } catch (error) {
       this.runtimeIssue = String(error?.message || error);
       this.requestViewRefresh();
@@ -5314,6 +5395,25 @@ module.exports = class OpenAgentPlugin extends Plugin {
     } catch (error) {
       this.runtimeIssue = String(error?.message || error);
       this.requestViewRefresh(options);
+    }
+  }
+
+  async hydrateTaskDetails(taskId, options = {}) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId) {
+      return;
+    }
+
+    const task = this.tasksById[normalizedTaskId] || null;
+    if (!task || this.taskHasLoadedMessages(task) || this.taskDetailRefreshInFlight.has(normalizedTaskId)) {
+      return;
+    }
+
+    this.taskDetailRefreshInFlight.add(normalizedTaskId);
+    try {
+      await this.refreshTask(normalizedTaskId, options);
+    } finally {
+      this.taskDetailRefreshInFlight.delete(normalizedTaskId);
     }
   }
 
@@ -5371,6 +5471,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     await this.persistPluginState();
     this.subscribeToTask(taskId);
     this.requestViewRefresh();
+    void this.hydrateTaskDetails(taskId, { force: true });
   }
 
   async handleNewThreadFromSelectionCommand() {
@@ -6331,6 +6432,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.persistPluginState();
     if (nextTaskId) {
       this.subscribeToTask(nextTaskId);
+      void this.hydrateTaskDetails(nextTaskId, { force: true });
     } else {
       this.disposeActiveStream();
     }

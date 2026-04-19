@@ -31,6 +31,7 @@ const DEFAULT_APP_PATH = "/Applications/Codex.app";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
 const TASK_STORE_SAVE_DEBOUNCE_MS = 75;
+const TASK_MESSAGE_PREVIEW_LENGTH = 280;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -139,6 +140,51 @@ function sendError(response, statusCode, message, details = {}) {
 function parseTaskId(pathname) {
   const match = /^\/tasks\/([^/]+)/.exec(pathname);
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+function compactMessageText(value, maxLength = 0) {
+  const compact = String(value || "").replace(/\s+/g, " ").trim();
+  if (!maxLength || compact.length <= maxLength) {
+    return compact;
+  }
+
+  const suffix = "...";
+  return `${compact.slice(0, Math.max(0, maxLength - suffix.length)).trimEnd()}${suffix}`;
+}
+
+function buildTaskMessageSummary(task) {
+  const messages = Array.isArray(task?.messages) ? task.messages : [];
+  const messageCount = messages.length;
+  const lastMessage = messageCount > 0 ? messages[messageCount - 1] : null;
+
+  let latestAssistantMessage = null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const text = String(message?.text || "");
+    if (message?.role !== "assistant" || !text.trim()) {
+      continue;
+    }
+
+    latestAssistantMessage = {
+      id: String(message?.id || message?.streamKey || ""),
+      role: "assistant",
+      kind: String(message?.kind || ""),
+      turnId: message?.turnId || null,
+      itemId: message?.itemId || null,
+      text,
+      createdAt: message?.createdAt || null,
+      updatedAt: message?.updatedAt || null,
+    };
+    break;
+  }
+
+  return {
+    messageCount,
+    lastMessageId: String(lastMessage?.id || lastMessage?.streamKey || ""),
+    lastMessageRole: String(lastMessage?.role || ""),
+    lastMessagePreview: compactMessageText(lastMessage?.text || "", TASK_MESSAGE_PREVIEW_LENGTH),
+    latestAssistantMessage,
+  };
 }
 
 function readRequestBody(request) {
@@ -794,12 +840,18 @@ class OpenAgentDaemon {
     return true;
   }
 
-  taskPayload(task) {
+  taskPayload(task, options = {}) {
     if (!task) {
       return null;
     }
+
+    const includeMessages = options.includeMessages !== false;
+    const messageSummary = buildTaskMessageSummary(task);
     return {
       ...task,
+      ...messageSummary,
+      messages: includeMessages ? (Array.isArray(task.messages) ? task.messages : []) : [],
+      messagesIncluded: includeMessages,
       runtimeConfig: normalizeRuntimeConfig(task.runtimeConfig),
     };
   }
@@ -1340,7 +1392,7 @@ class OpenAgentDaemon {
 
       if (request.method === "GET" && pathname === "/tasks") {
         sendJson(response, 200, {
-          tasks: this.store.getTasks().map((task) => this.taskPayload(task)),
+          tasks: this.store.getTasks().map((task) => this.taskPayload(task, { includeMessages: false })),
         });
         return;
       }
