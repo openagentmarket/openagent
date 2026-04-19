@@ -520,6 +520,52 @@ function escapeAttributeSelectorValue(value) {
     .replace(/"/g, '\\"');
 }
 
+function parseIsoTimestamp(value) {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return null;
+  }
+
+  const timestamp = Date.parse(normalizedValue);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getStartOfLocalDayTimestamp(value) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function formatTaskListDayLabel(dayTimestamp) {
+  const normalizedDayTimestamp = Number(dayTimestamp);
+  if (!Number.isFinite(normalizedDayTimestamp)) {
+    return "Unknown";
+  }
+
+  const dayDate = new Date(normalizedDayTimestamp);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayDifference = Math.round((today.getTime() - normalizedDayTimestamp) / 86_400_000);
+  if (dayDifference === 0) {
+    return "Today";
+  }
+  if (dayDifference === 1) {
+    return "Yesterday";
+  }
+
+  return dayDate.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: dayDate.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  });
+}
+
 function autoArrangeCanvasNodes(nodes, edges) {
   const originalNodes = Array.isArray(nodes)
     ? nodes
@@ -2396,8 +2442,20 @@ class OpenAgentView extends ItemView {
     const onTaskClick = typeof options.onTaskClick === "function"
       ? options.onTaskClick
       : ((task) => this.plugin.activateTaskFromList(task.taskId));
+    const visibleTasks = displayedTasks.slice(0, visibleTaskCount);
+    let previousDayKey = "";
 
-    displayedTasks.slice(0, visibleTaskCount).forEach((task) => {
+    visibleTasks.forEach((task) => {
+      const dayTimestamp = this.plugin.getTaskConversationLastMessageDayTimestamp(task);
+      const dayKey = Number.isFinite(dayTimestamp) ? String(dayTimestamp) : "unknown";
+      if (dayKey !== previousDayKey) {
+        previousDayKey = dayKey;
+        listEl.createEl("h4", {
+          cls: "oa-task-list-date-heading",
+          text: formatTaskListDayLabel(dayTimestamp),
+        });
+      }
+
       const item = listEl.createDiv({
         cls: `oa-task-item${options.activeTask?.taskId === task.taskId ? " is-active" : ""}`,
       });
@@ -4191,6 +4249,30 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return Object.values(this.tasksById).sort((left, right) => {
       return (right.updatedAt || "").localeCompare(left.updatedAt || "");
     });
+  }
+
+  getTaskConversationLastMessageTimestamp(task) {
+    const messages = Array.isArray(task?.messages) ? task.messages : [];
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const lastMessageTimestamp = parseIsoTimestamp(lastMessage?.updatedAt || lastMessage?.createdAt || "");
+    if (lastMessageTimestamp != null) {
+      return lastMessageTimestamp;
+    }
+
+    if (String(task?.lastMessageRole || "") === "assistant") {
+      const latestAssistantTimestamp = parseIsoTimestamp(
+        task?.latestAssistantMessage?.updatedAt || task?.latestAssistantMessage?.createdAt || ""
+      );
+      if (latestAssistantTimestamp != null) {
+        return latestAssistantTimestamp;
+      }
+    }
+
+    return parseIsoTimestamp(task?.updatedAt || task?.createdAt || "") || 0;
+  }
+
+  getTaskConversationLastMessageDayTimestamp(task) {
+    return getStartOfLocalDayTimestamp(this.getTaskConversationLastMessageTimestamp(task));
   }
 
   getTaskRootNodeRef(task) {
@@ -6164,7 +6246,26 @@ module.exports = class OpenAgentPlugin extends Plugin {
       }
 
       const nodeIds = this.resolver.extractSelectedNodeIds(view);
+      const previousSnapshot = this.lastCanvasSelectionSnapshot;
       if (nodeIds.length === 0) {
+        const didClearSelection = (
+          previousSnapshot?.canvasPath === file.path
+          && Array.isArray(previousSnapshot?.nodeIds)
+          && previousSnapshot.nodeIds.length > 0
+        );
+        this.lastCanvasSelectionSnapshot = {
+          canvasPath: file.path,
+          nodeIds: [],
+          selectionIdentity: "",
+          capturedAt: Date.now(),
+          selectedNodeType: "",
+          selectedNodeLabel: "",
+        };
+        if (didClearSelection) {
+          this.syncActiveTaskToCanvasContext();
+          void this.refreshSelectedGroupContextPreview({ force: true });
+          this.requestViewRefresh();
+        }
         return;
       }
 
@@ -6178,7 +6279,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
         selectedNodeType: String(selectedNode?.type || "").trim(),
         selectedNodeLabel: String(selectedNode?.label || "").trim(),
       };
-      const previousSnapshot = this.lastCanvasSelectionSnapshot;
       const selectionUnchanged = (
         previousSnapshot?.canvasPath === nextSnapshot.canvasPath
         && previousSnapshot?.selectionIdentity === nextSnapshot.selectionIdentity
@@ -6933,6 +7033,23 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return this.resolveFollowUpTaskForCanvasNodeIds(canvasPath, snapshot.nodeIds);
   }
 
+  hasExplicitCanvasDeselection(canvasPath) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    const snapshot = this.lastCanvasSelectionSnapshot;
+    if (!normalizedCanvasPath || !snapshot || snapshot.canvasPath !== normalizedCanvasPath) {
+      return false;
+    }
+
+    if (Date.now() - Number(snapshot.capturedAt || 0) > RECENT_SELECTION_TTL_MS) {
+      return false;
+    }
+
+    const nodeIds = Array.isArray(snapshot.nodeIds)
+      ? snapshot.nodeIds.map((nodeId) => String(nodeId)).filter(Boolean)
+      : [];
+    return nodeIds.length === 0;
+  }
+
   syncActiveTaskToCanvasContext() {
     const activeCanvasPath = this.getActiveCanvasPath();
     if (!activeCanvasPath) {
@@ -6954,6 +7071,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
       if (!nextTask) {
         nextTask = this.getRecentSelectionTaskForCanvas(activeCanvasPath);
       }
+    } else if (this.hasExplicitCanvasDeselection(activeCanvasPath)) {
+      nextTask = null;
     } else {
       if (currentTask && this.getTaskCanvasPath(currentTask) === activeCanvasPath) {
         nextTask = currentTask;

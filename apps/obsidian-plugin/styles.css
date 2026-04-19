@@ -256,6 +256,15 @@
   gap: 10px;
 }
 
+.oa-task-list-date-heading {
+  margin: 4px 0 -2px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .oa-task-item,
 .oa-message,
 .oa-workspace-item {
