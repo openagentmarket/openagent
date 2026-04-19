@@ -2477,14 +2477,24 @@ class OpenAgentView extends ItemView {
       }
 
       const item = listEl.createDiv({
-        cls: `oa-task-item${options.activeTask?.taskId === task.taskId ? " is-active" : ""}`,
+        cls: `oa-task-item oa-thread-list-item${options.activeTask?.taskId === task.taskId ? " is-active" : ""}`,
       });
       const itemHeader = item.createDiv({ cls: "oa-task-item-header" });
-      itemHeader.createDiv({ cls: "oa-task-title", text: task.title || "Untitled task" });
-      itemHeader.createDiv({
-        cls: `oa-status-tag${this.plugin.isTaskRunning(task) ? " is-running" : ""}`,
-        text: task.status || "idle",
-      });
+      itemHeader.createDiv({ cls: "oa-task-title oa-thread-list-title", text: task.title || "Untitled task" });
+      if (this.plugin.isTaskRunning(task)) {
+        itemHeader.createDiv({
+          cls: "oa-status-tag is-running",
+          text: task.status || "running",
+        });
+      } else {
+        itemHeader.createDiv({
+          cls: "oa-thread-list-arrow",
+          text: "→",
+          attr: {
+            "aria-hidden": "true",
+          },
+        });
+      }
 
       item.addEventListener("click", () => {
         void onTaskClick(task);
@@ -2813,7 +2823,7 @@ class OpenAgentView extends ItemView {
         this.renderTaskList(detail, emptyStateTasks, {
           title: emptyStateTaskGroup === "archived"
             ? (activeCanvasPath ? "Archived threads" : "Archived tasks")
-            : (activeCanvasPath ? "Threads on this canvas" : "Recent threads"),
+            : (activeCanvasPath ? "" : "Recent threads"),
           emptyText: activeCanvasPath
             ? "No thread yet for this canvas. Select a node and start one."
             : "Open a Canvas and select a node to start a conversation.",
