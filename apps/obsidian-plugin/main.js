@@ -43,6 +43,7 @@ const DEBUG_LOG_RELATIVE_PATH = path.join(".openagent", "new-thread-debug.jsonl"
 const DEV_SMOKE_POLL_MS = 1_000;
 const MAX_DEBUG_EVENTS = 30;
 const DAEMON_STATUS_POLL_MS = 10_000;
+const ACTIVE_TASK_STREAM_RECONNECT_DELAY_MS = 1_500;
 const RESULT_NODE_Y_GAP = 40;
 const RESULT_NODE_MIN_HEIGHT = 160;
 const RESULT_NODE_MAX_HEIGHT = 520;
@@ -1211,8 +1212,23 @@ class OpenAgentApiClient {
     return this.request("POST", `/tasks/${encodeURIComponent(taskId)}/interrupt`, {});
   }
 
-  openTaskStream(taskId, onEvent) {
+  openTaskStream(taskId, handlers = {}) {
     const config = this.loadConfig();
+    const normalizedHandlers = typeof handlers === "function"
+      ? { onEvent: handlers }
+      : (handlers && typeof handlers === "object" ? handlers : {});
+    const onEvent = typeof normalizedHandlers.onEvent === "function"
+      ? normalizedHandlers.onEvent
+      : () => {};
+    const onOpen = typeof normalizedHandlers.onOpen === "function"
+      ? normalizedHandlers.onOpen
+      : () => {};
+    const onClose = typeof normalizedHandlers.onClose === "function"
+      ? normalizedHandlers.onClose
+      : () => {};
+    const onError = typeof normalizedHandlers.onError === "function"
+      ? normalizedHandlers.onError
+      : () => {};
     const request = http.request({
       host: config.host,
       port: config.port,
@@ -1225,7 +1241,62 @@ class OpenAgentApiClient {
     });
 
     let buffer = "";
+    let responseRef = null;
+    let isClosed = false;
+    const notifyClose = (reason, detail = null) => {
+      if (isClosed) {
+        return;
+      }
+
+      isClosed = true;
+      try {
+        onClose(reason, detail);
+      } catch {
+        // Ignore stream close callback failures.
+      }
+    };
+
     request.on("response", (response) => {
+      responseRef = response;
+      if ((response.statusCode || 0) >= 400) {
+        let errorBuffer = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          errorBuffer += chunk;
+        });
+        response.on("end", () => {
+          let message = `Task stream failed (${response.statusCode}).`;
+          try {
+            const parsed = errorBuffer.trim() ? JSON.parse(errorBuffer) : {};
+            message = parsed?.error?.message || message;
+          } catch {
+            if (errorBuffer.trim()) {
+              message = errorBuffer.trim();
+            }
+          }
+
+          try {
+            onError(new Error(message));
+          } catch {
+            // Ignore stream error callback failures.
+          }
+          notifyClose("http-error", {
+            statusCode: response.statusCode,
+            message,
+          });
+        });
+        response.on("close", () => {
+          notifyClose("close");
+        });
+        return;
+      }
+
+      try {
+        onOpen();
+      } catch {
+        // Ignore stream open callback failures.
+      }
+
       response.setEncoding("utf8");
       response.on("data", (chunk) => {
         buffer += chunk;
@@ -1257,12 +1328,43 @@ class OpenAgentApiClient {
           }
         }
       });
+      response.on("end", () => {
+        notifyClose("end");
+      });
+      response.on("close", () => {
+        notifyClose("close");
+      });
+      response.on("error", (error) => {
+        try {
+          onError(error);
+        } catch {
+          // Ignore stream error callback failures.
+        }
+        notifyClose("response-error", {
+          error: String(error?.message || error),
+        });
+      });
     });
 
-    request.on("error", () => {});
+    request.on("error", (error) => {
+      try {
+        onError(error);
+      } catch {
+        // Ignore stream error callback failures.
+      }
+      notifyClose("request-error", {
+        error: String(error?.message || error),
+      });
+    });
     request.end();
 
-    return () => request.destroy();
+    return () => {
+      isClosed = true;
+      if (responseRef && !responseRef.destroyed) {
+        responseRef.destroy();
+      }
+      request.destroy();
+    };
   }
 }
 
@@ -3237,6 +3339,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.tasksById = {};
     this.viewRefreshTimer = null;
     this.activeStreamDisposer = null;
+    this.activeStreamReconnectTimer = null;
+    this.activeStreamTaskId = "";
+    this.activeStreamSessionId = 0;
     this.lastCanvasSelectionSnapshot = null;
     this.devSmokeRunPromise = null;
     this.lastProcessedSmokeRequestId = "";
@@ -6099,11 +6204,88 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
   }
 
-  disposeActiveStream() {
-    if (typeof this.activeStreamDisposer === "function") {
-      this.activeStreamDisposer();
+  clearActiveStreamReconnectTimer() {
+    if (this.activeStreamReconnectTimer != null) {
+      window.clearTimeout(this.activeStreamReconnectTimer);
+      this.activeStreamReconnectTimer = null;
     }
+  }
+
+  disposeActiveStream() {
+    this.clearActiveStreamReconnectTimer();
+    const disposer = this.activeStreamDisposer;
     this.activeStreamDisposer = null;
+    this.activeStreamTaskId = "";
+    this.activeStreamSessionId += 1;
+    if (typeof disposer === "function") {
+      disposer();
+    }
+  }
+
+  isActiveStreamSessionCurrent(taskId, sessionId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    return Boolean(normalizedTaskId)
+      && normalizedTaskId === String(this.activeStreamTaskId || "").trim()
+      && normalizedTaskId === String(this.uiState?.activeTaskId || "").trim()
+      && sessionId === this.activeStreamSessionId;
+  }
+
+  scheduleActiveStreamReconnect(taskId, sessionId) {
+    if (!this.isActiveStreamSessionCurrent(taskId, sessionId)) {
+      return;
+    }
+
+    this.clearActiveStreamReconnectTimer();
+    this.activeStreamReconnectTimer = window.setTimeout(() => {
+      this.activeStreamReconnectTimer = null;
+      if (!this.isActiveStreamSessionCurrent(taskId, sessionId)) {
+        return;
+      }
+
+      this.connectActiveTaskStream(taskId, sessionId);
+    }, ACTIVE_TASK_STREAM_RECONNECT_DELAY_MS);
+  }
+
+  connectActiveTaskStream(taskId, sessionId) {
+    if (!this.isActiveStreamSessionCurrent(taskId, sessionId)) {
+      return;
+    }
+
+    try {
+      this.activeStreamDisposer = this.api.openTaskStream(taskId, {
+        onEvent: (_event, payload) => {
+          if (!this.isActiveStreamSessionCurrent(taskId, sessionId)) {
+            return;
+          }
+
+          if (payload?.task) {
+            this.runtimeIssue = "";
+            this.mergeTask(payload.task);
+            this.requestViewRefresh();
+          }
+        },
+        onClose: () => {
+          if (!this.isActiveStreamSessionCurrent(taskId, sessionId)) {
+            return;
+          }
+
+          this.activeStreamDisposer = null;
+          void this.refreshTask(taskId, { force: true })
+            .catch(() => {})
+            .finally(() => {
+              this.scheduleActiveStreamReconnect(taskId, sessionId);
+            });
+        },
+      });
+    } catch (error) {
+      if (!this.isActiveStreamSessionCurrent(taskId, sessionId)) {
+        return;
+      }
+
+      this.runtimeIssue = String(error?.message || error);
+      this.requestViewRefresh();
+      this.scheduleActiveStreamReconnect(taskId, sessionId);
+    }
   }
 
   subscribeToTask(taskId) {
@@ -6112,17 +6294,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
       return;
     }
 
-    try {
-      this.activeStreamDisposer = this.api.openTaskStream(taskId, (_event, payload) => {
-        if (payload?.task) {
-          this.mergeTask(payload.task);
-          this.requestViewRefresh();
-        }
-      });
-    } catch (error) {
-      this.runtimeIssue = String(error?.message || error);
-      this.requestViewRefresh();
-    }
+    this.activeStreamTaskId = String(taskId || "").trim();
+    this.activeStreamSessionId += 1;
+    this.connectActiveTaskStream(this.activeStreamTaskId, this.activeStreamSessionId);
   }
 
   async setActiveTask(taskId, options = {}) {
