@@ -514,6 +514,12 @@ function doesCanvasGroupContainNode(groupNode, candidateNode) {
   );
 }
 
+function escapeAttributeSelectorValue(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+}
+
 function autoArrangeCanvasNodes(nodes, edges) {
   const originalNodes = Array.isArray(nodes)
     ? nodes
@@ -2361,6 +2367,66 @@ class OpenAgentView extends ItemView {
     this.render();
   }
 
+  renderTaskList(parentEl, tasks, options = {}) {
+    if (!parentEl) {
+      return;
+    }
+
+    const title = String(options.title || "").trim();
+    if (title) {
+      parentEl.createEl("h3", { text: title });
+    }
+
+    const displayedTasks = Array.isArray(tasks) ? tasks : [];
+    const listEl = parentEl.createDiv({ cls: "oa-task-list" });
+    if (displayedTasks.length === 0) {
+      listEl.createDiv({
+        cls: "oa-muted",
+        text: String(options.emptyText || "No threads yet."),
+      });
+      return;
+    }
+
+    const listKey = String(options.listKey || "").trim();
+    const visibleTaskCount = options.enablePagination === false
+      ? displayedTasks.length
+      : this.syncVisibleSettingsTaskCount(listKey, displayedTasks.length, {
+          reset: options.resetPagination === true,
+        });
+    const onTaskClick = typeof options.onTaskClick === "function"
+      ? options.onTaskClick
+      : ((task) => this.plugin.activateTaskFromList(task.taskId));
+
+    displayedTasks.slice(0, visibleTaskCount).forEach((task) => {
+      const item = listEl.createDiv({
+        cls: `oa-task-item${options.activeTask?.taskId === task.taskId ? " is-active" : ""}`,
+      });
+      const itemHeader = item.createDiv({ cls: "oa-task-item-header" });
+      itemHeader.createDiv({ cls: "oa-task-title", text: task.title || "Untitled task" });
+      itemHeader.createDiv({
+        cls: `oa-status-tag${this.plugin.isTaskRunning(task) ? " is-running" : ""}`,
+        text: task.status || "idle",
+      });
+
+      item.addEventListener("click", () => {
+        void onTaskClick(task);
+      });
+    });
+
+    if (options.enablePagination === false || displayedTasks.length <= visibleTaskCount) {
+      return;
+    }
+
+    const moreActions = parentEl.createDiv({ cls: "oa-action-row" });
+    this.makeButton(
+      moreActions,
+      `Show more (${displayedTasks.length - visibleTaskCount} left)`,
+      () => this.showMoreSettingsTasks(listKey, displayedTasks.length),
+      false,
+      { runOnMouseDown: true }
+    );
+  }
+
   renderGroupContextPreview(parentEl, preview) {
     if (!parentEl || !preview) {
       return;
@@ -2615,64 +2681,27 @@ class OpenAgentView extends ItemView {
       const displayedTasks = settingsTaskTab === "archived"
         ? archivedTasks
         : (settingsTaskTab === "running" ? runningTasks : tasks);
-      const threadList = threadSection.createDiv({ cls: "oa-task-list" });
-      if (displayedTasks.length === 0) {
-        threadList.createDiv({
-          cls: "oa-muted",
-          text: settingsTaskTab === "archived"
+      const taskListKey = [
+        "workspace-settings",
+        settingsTaskTab,
+        activeCanvasPath || "",
+        activeWorkspace?.repoPath || "",
+      ].join(":");
+      this.renderTaskList(threadSection, displayedTasks, {
+        emptyText: settingsTaskTab === "archived"
+          ? (activeCanvasPath
+            ? "No archived thread yet for this canvas."
+            : "No archived task yet.")
+          : (settingsTaskTab === "running"
             ? (activeCanvasPath
-              ? "No archived thread yet for this canvas."
-              : "No archived task yet.")
-            : (settingsTaskTab === "running"
-              ? (activeCanvasPath
-                ? "No running thread for this canvas."
-                : "No running task right now.")
-              : (activeCanvasPath
-                ? "No thread yet for this canvas. Select a node and start one."
-                : "Open a Canvas and select a text node to work with its thread.")),
-        });
-      } else {
-        const taskListKey = [
-          "workspace-settings",
-          settingsTaskTab,
-          activeCanvasPath || "",
-          activeWorkspace?.repoPath || "",
-        ].join(":");
-        const visibleTaskCount = this.syncVisibleSettingsTaskCount(taskListKey, displayedTasks.length);
-        displayedTasks.slice(0, visibleTaskCount).forEach((task) => {
-          const item = threadList.createDiv({
-            cls: `oa-task-item${activeTask?.taskId === task.taskId ? " is-active" : ""}`,
-          });
-          const itemHeader = item.createDiv({ cls: "oa-task-item-header" });
-          itemHeader.createDiv({ cls: "oa-task-title", text: task.title || "Untitled task" });
-          itemHeader.createDiv({
-            cls: `oa-status-tag${this.plugin.isTaskRunning(task) ? " is-running" : ""}`,
-            text: task.status || "idle",
-          });
-          const taskMeta = task.sourceRef || task.cwd || "";
-          if (taskMeta) {
-            item.createDiv({
-              cls: "oa-task-meta",
-              text: taskMeta,
-              attr: { title: taskMeta },
-            });
-          }
-          item.addEventListener("click", () => this.plugin.setActiveTask(task.taskId, {
-            revealInActiveTab: true,
-          }));
-        });
-
-        if (displayedTasks.length > visibleTaskCount) {
-          const moreActions = threadSection.createDiv({ cls: "oa-action-row" });
-          this.makeButton(
-            moreActions,
-            `Show more (${displayedTasks.length - visibleTaskCount} left)`,
-            () => this.showMoreSettingsTasks(taskListKey, displayedTasks.length),
-            false,
-            { runOnMouseDown: true }
-          );
-        }
-      }
+              ? "No running thread for this canvas."
+              : "No running task right now.")
+            : (activeCanvasPath
+              ? "No thread yet for this canvas. Select a node and start one."
+              : "Open a Canvas and select a text node to work with its thread.")),
+        listKey: taskListKey,
+        activeTask,
+      });
 
       this.restoreComposerFocusState(composerFocusState);
       this.restorePanelScrollState(panelScrollState, panelScrollKey);
@@ -2695,6 +2724,25 @@ class OpenAgentView extends ItemView {
         const emptyActions = detail.createDiv({ cls: "oa-action-row" });
         this.makeButton(emptyActions, "New conversation", () => this.plugin.handleNewThreadFromSelectionCommand(), false, {
           runOnMouseDown: true,
+        });
+      }
+      const emptyStateTasks = tasks.length > 0 ? tasks : archivedTasks;
+      if (emptyStateTasks.length > 0) {
+        const emptyStateTaskGroup = emptyStateTasks === archivedTasks ? "archived" : "recent";
+        this.renderTaskList(detail, emptyStateTasks, {
+          title: emptyStateTaskGroup === "archived"
+            ? (activeCanvasPath ? "Archived threads" : "Archived tasks")
+            : (activeCanvasPath ? "Threads on this canvas" : "Recent threads"),
+          emptyText: activeCanvasPath
+            ? "No thread yet for this canvas. Select a node and start one."
+            : "Open a Canvas and select a node to start a conversation.",
+          listKey: [
+            "active-task-empty-state",
+            emptyStateTaskGroup,
+            activeCanvasPath || "",
+            activeWorkspace?.repoPath || "",
+          ].join(":"),
+          activeTask,
         });
       }
       this.restorePanelScrollState(panelScrollState, panelScrollKey);
@@ -5470,6 +5518,287 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.requestViewRefresh();
   }
 
+  getTaskJumpNodeRef(task) {
+    if (!task) {
+      return null;
+    }
+
+    const assistantMessage = this.getLatestAssistantMessage(task);
+    const resultRef = this.getTaskResultNodeRef(task);
+    if (
+      resultRef
+      && assistantMessage?.text?.trim()
+      && this.isLatestAssistantMessageCurrentForActiveSource(task, assistantMessage)
+      && this.readCanvasNodeByIdSync(resultRef.canvasPath, resultRef.resultNodeId)
+    ) {
+      return {
+        canvasPath: resultRef.canvasPath,
+        nodeId: resultRef.resultNodeId,
+      };
+    }
+
+    const sourceRef = this.getTaskCanvasRunSourceRef(task);
+    if (sourceRef && this.readCanvasNodeByIdSync(sourceRef.canvasPath, sourceRef.nodeId)) {
+      return sourceRef;
+    }
+
+    const rootRef = this.getTaskRootNodeRef(task);
+    if (rootRef && this.readCanvasNodeByIdSync(rootRef.canvasPath, rootRef.nodeId)) {
+      return rootRef;
+    }
+
+    return sourceRef || rootRef || null;
+  }
+
+  findCanvasLeafByPath(canvasPath) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    if (!normalizedCanvasPath) {
+      return null;
+    }
+
+    return this.app.workspace.getLeavesOfType("canvas").find((leaf) => {
+      return String(leaf?.view?.file?.path || "").trim() === normalizedCanvasPath;
+    }) || null;
+  }
+
+  findCanvasRuntimeNodeById(canvas, nodeId) {
+    const normalizedNodeId = String(nodeId || "").trim();
+    if (!canvas || !normalizedNodeId) {
+      return null;
+    }
+
+    const getCandidateNodeId = (candidate) => {
+      if (!candidate || typeof candidate !== "object") {
+        return "";
+      }
+
+      const directIds = [
+        candidate.id,
+        candidate.node?.id,
+        candidate.data?.id,
+        candidate.node?.data?.id,
+        candidate.item?.id,
+        candidate.item?.data?.id,
+      ];
+      for (const candidateId of directIds) {
+        const normalizedCandidateId = String(candidateId || "").trim();
+        if (normalizedCandidateId) {
+          return normalizedCandidateId;
+        }
+      }
+
+      if (typeof candidate.getData === "function") {
+        try {
+          return String(candidate.getData()?.id || "").trim();
+        } catch {
+          return "";
+        }
+      }
+
+      return "";
+    };
+    const matchesNodeId = (candidate) => getCandidateNodeId(candidate) === normalizedNodeId;
+    const candidateCollections = [
+      canvas?.nodes,
+      canvas?.nodeMap,
+      canvas?.selectionManager?.nodes,
+    ].filter(Boolean);
+
+    for (const collection of candidateCollections) {
+      if (collection instanceof Map) {
+        const directMatch = collection.get(normalizedNodeId);
+        if (directMatch) {
+          return directMatch;
+        }
+
+        for (const value of collection.values()) {
+          if (matchesNodeId(value)) {
+            return value;
+          }
+        }
+        continue;
+      }
+
+      if (Array.isArray(collection)) {
+        const directMatch = collection.find((value) => matchesNodeId(value));
+        if (directMatch) {
+          return directMatch;
+        }
+        continue;
+      }
+
+      if (typeof collection === "object") {
+        const directMatch = collection[normalizedNodeId];
+        if (matchesNodeId(directMatch)) {
+          return directMatch;
+        }
+
+        for (const value of Object.values(collection)) {
+          if (matchesNodeId(value)) {
+            return value;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  selectCanvasNodeInView(view, nodeId, runtimeNode = null) {
+    const normalizedNodeId = String(nodeId || "").trim();
+    const canvas = view?.canvas;
+    if (!normalizedNodeId || !canvas) {
+      return false;
+    }
+
+    const deselectCalls = [
+      [canvas, "deselectAll"],
+      [canvas?.selectionManager, "deselectAll"],
+      [canvas?.selectionManager, "clear"],
+    ];
+    deselectCalls.forEach(([owner, method]) => {
+      if (typeof owner?.[method] !== "function") {
+        return;
+      }
+
+      try {
+        owner[method]();
+      } catch {
+        // Ignore Canvas API differences across Obsidian versions.
+      }
+    });
+
+    if (runtimeNode) {
+      const selectCalls = [
+        [canvas, "select"],
+        [canvas?.selectionManager, "select"],
+      ];
+      for (const [owner, method] of selectCalls) {
+        if (typeof owner?.[method] !== "function") {
+          continue;
+        }
+
+        try {
+          owner[method](runtimeNode);
+          return true;
+        } catch {
+          // Fall through to DOM selection fallback below.
+        }
+      }
+    }
+
+    const selector = `[data-node-id="${escapeAttributeSelectorValue(normalizedNodeId)}"]`;
+    const nodeEl = view?.containerEl?.querySelector?.(selector);
+    if (!nodeEl) {
+      return false;
+    }
+
+    ["mousedown", "mouseup", "click"].forEach((eventName) => {
+      try {
+        nodeEl.dispatchEvent(new MouseEvent(eventName, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+        }));
+      } catch {
+        // Ignore DOM event dispatch failures on older runtimes.
+      }
+    });
+    return true;
+  }
+
+  focusCanvasNodeInView(view, canvasPath, nodeId) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    const normalizedNodeId = String(nodeId || "").trim();
+    if (!view?.canvas || !normalizedCanvasPath || !normalizedNodeId) {
+      return false;
+    }
+
+    const node = this.readCanvasNodeByIdSync(normalizedCanvasPath, normalizedNodeId);
+    if (!node) {
+      return false;
+    }
+
+    if (typeof view.canvas.zoomToBbox === "function") {
+      try {
+        view.canvas.zoomToBbox({
+          minX: toFiniteNumber(node?.x, 0) - Math.max(1, toFiniteNumber(node?.width, RESULT_NODE_DEFAULT_WIDTH)),
+          minY: toFiniteNumber(node?.y, 0) - Math.max(1, toFiniteNumber(node?.height, RESULT_NODE_MIN_HEIGHT)),
+          maxX: toFiniteNumber(node?.x, 0) + Math.max(1, toFiniteNumber(node?.width, RESULT_NODE_DEFAULT_WIDTH)),
+          maxY: toFiniteNumber(node?.y, 0) + Math.max(1, toFiniteNumber(node?.height, RESULT_NODE_MIN_HEIGHT)),
+        });
+      } catch {
+        // Ignore zoom failures and still attempt selection below.
+      }
+    }
+
+    const runtimeNode = this.findCanvasRuntimeNodeById(view.canvas, normalizedNodeId);
+    return this.selectCanvasNodeInView(view, normalizedNodeId, runtimeNode);
+  }
+
+  async revealCanvasNode(canvasPath, nodeId) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    const normalizedNodeId = String(nodeId || "").trim();
+    if (!normalizedCanvasPath || !normalizedNodeId) {
+      return false;
+    }
+
+    const abstractFile = this.app.vault.getAbstractFileByPath(normalizedCanvasPath);
+    if (!(abstractFile instanceof TFile) || abstractFile.extension !== "canvas") {
+      return false;
+    }
+
+    const activeLeaf = this.app.workspace.activeLeaf;
+    const reusableLeaf = this.app.workspace.getMostRecentLeaf();
+    const leaf = this.findCanvasLeafByPath(normalizedCanvasPath)
+      || (activeLeaf?.view?.getViewType?.() === "canvas" ? activeLeaf : null)
+      || this.app.workspace.getLeavesOfType("canvas")[0]
+      || (reusableLeaf?.view?.getViewType?.() === VIEW_TYPE ? null : reusableLeaf)
+      || this.app.workspace.getLeaf(true);
+    await leaf.openFile(abstractFile);
+    this.app.workspace.revealLeaf(leaf);
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const view = leaf?.view?.getViewType?.() === "canvas"
+        ? leaf.view
+        : this.resolver.getActiveCanvasView();
+      const viewCanvasPath = String(view?.file?.path || "").trim();
+      if (viewCanvasPath === normalizedCanvasPath && this.focusCanvasNodeInView(view, normalizedCanvasPath, normalizedNodeId)) {
+        return true;
+      }
+
+      await sleep(attempt === 0 ? 0 : 50);
+    }
+
+    return false;
+  }
+
+  async revealTaskInCanvas(task) {
+    const ref = this.getTaskJumpNodeRef(task);
+    if (!ref) {
+      return false;
+    }
+
+    return this.revealCanvasNode(ref.canvasPath, ref.nodeId);
+  }
+
+  async activateTaskFromList(taskId, options = {}) {
+    const normalizedTaskId = String(taskId || "").trim();
+    const task = this.tasksById[normalizedTaskId] || null;
+    if (!task) {
+      return false;
+    }
+
+    await this.setActiveTask(normalizedTaskId, {
+      revealInActiveTab: options.revealInActiveTab !== false,
+    });
+    if (options.revealInCanvas === false) {
+      return true;
+    }
+
+    return this.revealTaskInCanvas(this.tasksById[normalizedTaskId] || task);
+  }
+
   async ensurePanelVisibleOnStartup() {
     if (this.app.workspace.getLeavesOfType(VIEW_TYPE).length > 0) {
       return;
@@ -6727,7 +7056,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       return;
     }
 
-    await this.setActiveTask(task.taskId, { revealInActiveTab: true });
+    await this.activateTaskFromList(task.taskId);
   }
 
   async stopActiveTask() {
