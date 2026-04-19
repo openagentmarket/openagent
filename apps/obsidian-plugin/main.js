@@ -42,7 +42,6 @@ const DEV_SMOKE_RESULT_RELATIVE_PATH = path.join(".openagent", "smoke-result.jso
 const DEBUG_LOG_RELATIVE_PATH = path.join(".openagent", "new-thread-debug.jsonl");
 const DEV_SMOKE_POLL_MS = 1_000;
 const MAX_DEBUG_EVENTS = 30;
-const RUNNING_TASK_REFRESH_POLL_MS = 1_500;
 const DAEMON_STATUS_POLL_MS = 10_000;
 const RESULT_NODE_Y_GAP = 40;
 const RESULT_NODE_MIN_HEIGHT = 160;
@@ -2034,6 +2033,7 @@ class OpenAgentView extends ItemView {
     this.lastRenderedTaskMessageStateByTask = new Map();
     this.activeSelectableMessageEl = null;
     this.isClampingMessageSelection = false;
+    this.taskListHovered = false;
   }
 
   getViewType() {
@@ -2077,6 +2077,25 @@ class OpenAgentView extends ItemView {
 
     messageTextEl.addEventListener("mousedown", activateMessageSelection);
     messageTextEl.addEventListener("pointerdown", activateMessageSelection);
+  }
+
+  bindTaskListHoverGuard(taskListEl) {
+    if (!taskListEl) {
+      return;
+    }
+
+    taskListEl.addEventListener("mouseenter", () => {
+      this.taskListHovered = true;
+      this.plugin.setTaskListHovered(true);
+    });
+    taskListEl.addEventListener("mouseleave", () => {
+      this.taskListHovered = false;
+      this.plugin.setTaskListHovered(false);
+    });
+  }
+
+  hasHoveredTaskList() {
+    return this.taskListHovered === true;
   }
 
   handleMessageSelectionChange() {
@@ -2425,6 +2444,7 @@ class OpenAgentView extends ItemView {
 
     const displayedTasks = Array.isArray(tasks) ? tasks : [];
     const listEl = parentEl.createDiv({ cls: "oa-task-list" });
+    this.bindTaskListHoverGuard(listEl);
     if (displayedTasks.length === 0) {
       listEl.createDiv({
         cls: "oa-muted",
@@ -2630,6 +2650,9 @@ class OpenAgentView extends ItemView {
         : (activeTask?.cwd ? compactPathLabel(activeTask.cwd) : (activeWorkspace?.name || "Canvas-linked conversations")),
     });
     const actions = headerTop.createDiv({ cls: "oa-action-row oa-header-actions" });
+    this.makeButton(actions, "Refresh", () => {
+      void this.plugin.refreshTasks();
+    });
     if (isSettingsScreen) {
       this.makeButton(actions, "Done", () => this.plugin.setPanelTab(PANEL_TAB_OPTIONS.ACTIVE_TASK));
     } else {
@@ -3232,9 +3255,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.canvasNodeHighlightSyncInFlight = new Set();
     this.canvasNodeHighlightSyncPending = new Set();
     this.canvasAutoRunInFlightByKey = new Set();
-    this.runningTaskRefreshInFlight = new Set();
     this.taskDetailRefreshInFlight = new Set();
     this.composerFocused = false;
+    this.taskListHovered = false;
     this.pendingViewRefresh = false;
     this.workspaceSummaryCacheByConfigPath = new Map();
     this.workspaceSummariesLoadPromise = null;
@@ -3253,9 +3276,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
       this.captureCanvasSelectionSnapshot();
     }, SELECTION_SNAPSHOT_POLL_MS));
     this.configureDevSmokePolling();
-    this.registerInterval(window.setInterval(() => {
-      void this.refreshRunningTasks();
-    }, RUNNING_TASK_REFRESH_POLL_MS));
     this.registerInterval(window.setInterval(() => {
       void this.refreshDaemonStatus({
         silent: true,
@@ -5930,6 +5950,12 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
   }
 
+  hasHoveredTaskList() {
+    return this.app.workspace.getLeavesOfType(VIEW_TYPE).some((leaf) => {
+      return typeof leaf.view?.hasHoveredTaskList === "function" && leaf.view.hasHoveredTaskList();
+    });
+  }
+
   setComposerFocused(isFocused) {
     this.composerFocused = Boolean(isFocused);
     if (this.composerFocused) {
@@ -5943,7 +5969,26 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     window.clearTimeout(this.viewRefreshTimer);
     this.viewRefreshTimer = window.setTimeout(() => {
-      if (this.pendingViewRefresh && !this.hasFocusedComposer()) {
+      if (this.pendingViewRefresh && !this.hasFocusedComposer() && !this.hasHoveredTaskList()) {
+        this.requestViewRefresh({ force: true });
+      }
+    }, 0);
+  }
+
+  setTaskListHovered(isHovered) {
+    this.taskListHovered = Boolean(isHovered);
+    if (this.taskListHovered) {
+      window.clearTimeout(this.viewRefreshTimer);
+      return;
+    }
+
+    if (!this.pendingViewRefresh) {
+      return;
+    }
+
+    window.clearTimeout(this.viewRefreshTimer);
+    this.viewRefreshTimer = window.setTimeout(() => {
+      if (this.pendingViewRefresh && !this.hasFocusedComposer() && !this.hasHoveredTaskList()) {
         this.requestViewRefresh({ force: true });
       }
     }, 0);
@@ -5951,7 +5996,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   requestViewRefresh(options = {}) {
     const force = options.force === true;
-    if (!force && (this.composerFocused || this.hasFocusedComposer())) {
+    if (!force && (this.composerFocused || this.hasFocusedComposer() || this.taskListHovered || this.hasHoveredTaskList())) {
       this.pendingViewRefresh = true;
       window.clearTimeout(this.viewRefreshTimer);
       return;
@@ -6041,26 +6086,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
       await this.refreshTask(normalizedTaskId, options);
     } finally {
       this.taskDetailRefreshInFlight.delete(normalizedTaskId);
-    }
-  }
-
-  async refreshRunningTasks() {
-    const runningTaskIds = Object.values(this.tasksById)
-      .filter((task) => this.isTaskRunning(task))
-      .map((task) => task.taskId)
-      .filter(Boolean);
-
-    for (const taskId of runningTaskIds) {
-      if (this.runningTaskRefreshInFlight.has(taskId)) {
-        continue;
-      }
-
-      this.runningTaskRefreshInFlight.add(taskId);
-      try {
-        await this.refreshTask(taskId);
-      } finally {
-        this.runningTaskRefreshInFlight.delete(taskId);
-      }
     }
   }
 
