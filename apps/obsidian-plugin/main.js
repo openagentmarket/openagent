@@ -1978,6 +1978,7 @@ class OpenAgentView extends ItemView {
     this.visibleSettingsTaskCountByKey = new Map();
     this.settingsTaskTab = "recent";
     this.lastRenderedActiveTaskId = null;
+    this.pendingInitialPanelScrollKey = "";
     this.lastRenderedTaskMessageStateByTask = new Map();
     this.activeSelectableMessageEl = null;
     this.isClampingMessageSelection = false;
@@ -2225,6 +2226,21 @@ class OpenAgentView extends ItemView {
     });
   }
 
+  queueInitialPanelScroll(nextKey) {
+    this.pendingInitialPanelScrollKey = String(nextKey || "").trim();
+  }
+
+  shouldInitialScrollToConversationEnd(nextKey) {
+    return String(nextKey || "").trim() !== ""
+      && this.pendingInitialPanelScrollKey === String(nextKey || "").trim();
+  }
+
+  consumeInitialPanelScroll(nextKey) {
+    if (this.pendingInitialPanelScrollKey === String(nextKey || "").trim()) {
+      this.pendingInitialPanelScrollKey = "";
+    }
+  }
+
   hasFocusedComposer() {
     const input = this.composerInput;
     return Boolean(input && input.ownerDocument?.activeElement === input);
@@ -2451,6 +2467,9 @@ class OpenAgentView extends ItemView {
       panelTab === PANEL_TAB_OPTIONS.ACTIVE_TASK ? (activeTask?.taskId || "") : "",
     ].join(":");
     this.panelScrollKey = panelScrollKey;
+    if (panelTab === PANEL_TAB_OPTIONS.ACTIVE_TASK && activeTaskId && didSwitchActiveTask) {
+      this.queueInitialPanelScroll(panelScrollKey);
+    }
 
     const header = contentEl.createDiv({ cls: "oa-header" });
     const headerTop = header.createDiv({ cls: "oa-header-top" });
@@ -2721,6 +2740,8 @@ class OpenAgentView extends ItemView {
       });
       const firstVisibleIndex = Math.max(0, messages.length - visibleMessageCount);
       const hiddenMessageCount = firstVisibleIndex;
+      const shouldInitialScrollToConversationEnd = this.shouldInitialScrollToConversationEnd(panelScrollKey);
+      let latestMessageEl = null;
       let latestUserMessageEl = null;
       if (hiddenMessageCount > 0) {
         const pagination = messagesSection.createDiv({ cls: "oa-message-pagination" });
@@ -2747,6 +2768,7 @@ class OpenAgentView extends ItemView {
         const item = messageList.createDiv({
           cls: `oa-message oa-chat-message oa-role-${message.role || "system"}${isToolMessage ? " oa-message-tool" : ""}`,
         });
+        latestMessageEl = item;
         if (isToolMessage) {
           const messageKey = this.getMessageIdentity(message, messageIndex);
           const expanded = this.expandedToolMessages.has(messageKey);
@@ -2814,7 +2836,10 @@ class OpenAgentView extends ItemView {
         }
       });
 
-      if (shouldAutoScrollToLatestUserMessage && latestUserMessageEl) {
+      if (shouldInitialScrollToConversationEnd && latestMessageEl) {
+        this.consumeInitialPanelScroll(panelScrollKey);
+        this.scrollMessageIntoView(latestMessageEl, panelScrollKey);
+      } else if (shouldAutoScrollToLatestUserMessage && latestUserMessageEl) {
         this.scrollMessageIntoView(latestUserMessageEl, panelScrollKey);
       } else {
         this.restorePanelScrollState(panelScrollState, panelScrollKey);
