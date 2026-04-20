@@ -17,6 +17,10 @@
   max-width: 38rem;
 }
 
+.brandLockup {
+  margin: 0 0 1rem;
+}
+
 .eyebrow {
   margin: 0 0 0.75rem;
   color: var(--ifm-color-emphasis-700);
@@ -25,13 +29,22 @@
   letter-spacing: 0.02em;
 }
 
-.title {
-  margin: 0 0 0.9rem;
-  font-size: clamp(2.75rem, 5vw, 4.5rem);
-  font-weight: 600;
-  letter-spacing: -0.05em;
-  line-height: 0.95;
-  text-wrap: balance;
+.wordmark {
+  display: block;
+  width: min(100%, 34rem);
+  height: auto;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .subtitle {
@@ -161,6 +174,10 @@
   font-size: 0.9rem;
 }
 
+:global([data-theme='dark']) .wordmark {
+  filter: invert(1);
+}
+
 @media screen and (max-width: 996px) {
   .hero {
     padding: 3rem 0 2rem;
@@ -169,10 +186,6 @@
   .heroGrid,
   .sectionGrid {
     grid-template-columns: 1fr;
-  }
-
-  .title {
-    font-size: clamp(2.25rem, 11vw, 3.4rem);
   }
 }
 

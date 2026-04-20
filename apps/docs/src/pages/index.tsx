@@ -48,6 +48,7 @@ const sections = [
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
+  const wordmarkUrl = useBaseUrl('/openagent-wordmark.png');
   const screenshotUrl = useBaseUrl('/openagent-canvas-screenshot.png');
 
   return (
@@ -60,7 +61,14 @@ export default function Home(): ReactNode {
             <div className={styles.heroGrid}>
               <div className={styles.heroCopy}>
                 <p className={styles.eyebrow}>Documentation</p>
-                <Heading as="h1" className={styles.title}>
+                <div className={styles.brandLockup}>
+                  <img
+                    className={styles.wordmark}
+                    src={wordmarkUrl}
+                    alt="OpenAgent"
+                  />
+                </div>
+                <Heading as="h1" className={styles.srOnly}>
                   {siteConfig.title}
                 </Heading>
                 <p className={styles.subtitle}>{siteConfig.tagline}</p>

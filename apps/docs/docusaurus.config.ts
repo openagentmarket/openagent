@@ -9,7 +9,7 @@ const config: Config = {
   future: {
     v4: true,
   },
-  url: 'http://localhost:3000',
+  url: 'https://openagent-market-docs.web.app',
   baseUrl: '/',
   organizationName: 'openagentmarket',
   projectName: 'openagent',
@@ -50,7 +50,13 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'OpenAgent',
+      logo: {
+        alt: 'OpenAgent',
+        src: 'openagent-wordmark.png',
+        srcDark: 'openagent-wordmark.png',
+        width: 156,
+        height: 52,
+      },
       items: [
         {
           type: 'docSidebar',
