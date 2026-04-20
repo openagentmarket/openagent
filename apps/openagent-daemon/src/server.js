@@ -76,6 +76,49 @@ function normalizeWorkingDirectory(value) {
   return normalizedPath;
 }
 
+function resolveSelectionImagePath(file, cwd = "") {
+  const absolutePath = String(file?.absolutePath || "").trim();
+  if (absolutePath && fs.existsSync(absolutePath)) {
+    return absolutePath;
+  }
+
+  const relativePath = String(file?.path || "").trim();
+  const normalizedCwd = String(cwd || "").trim();
+  if (normalizedCwd && relativePath) {
+    const candidateAbsolutePath = path.resolve(normalizedCwd, relativePath);
+    if (fs.existsSync(candidateAbsolutePath)) {
+      return candidateAbsolutePath;
+    }
+  }
+
+  return "";
+}
+
+function buildTurnInputItems(selectionContext, prompt, cwd = "") {
+  const selection = normalizeCanvasSelection(selectionContext);
+  const items = [];
+
+  selection.imageFiles.forEach((file) => {
+    const resolvedPath = resolveSelectionImagePath(file, cwd);
+    if (resolvedPath) {
+      items.push({
+        type: "localImage",
+        path: resolvedPath,
+      });
+    }
+  });
+
+  if (prompt) {
+    items.push({
+      type: "text",
+      text: prompt,
+      text_elements: [],
+    });
+  }
+
+  return items;
+}
+
 function randomToken() {
   return `${stableHash(nowIso())}${stableHash(Math.random().toString(16))}`;
 }
@@ -399,7 +442,7 @@ class CodexAppServerClient {
     throw lastError || new Error("Unable to start Codex thread.");
   }
 
-  async sendTurn(task, prompt, runtimeConfig = DEFAULT_RUNTIME_CONFIG) {
+  async sendTurn(task, inputItems, runtimeConfig = DEFAULT_RUNTIME_CONFIG) {
     await this.start();
     const normalizedRuntimeConfig = normalizeRuntimeConfig(runtimeConfig);
     const sandboxPolicyVariants = buildTurnSandboxPolicyVariants(normalizedRuntimeConfig.sandboxMode, task.cwd);
@@ -412,13 +455,7 @@ class CodexAppServerClient {
         response = await this.request("turn/start", {
           threadId: task.threadId,
           cwd: task.cwd,
-          input: [
-            {
-              type: "text",
-              text: prompt,
-              text_elements: [],
-            },
-          ],
+          input: inputItems,
           approvalPolicy: normalizedRuntimeConfig.approvalPolicy,
           sandboxPolicy,
         });
@@ -438,13 +475,7 @@ class CodexAppServerClient {
     response = await this.request("turn/start", {
       threadId: task.threadId,
       cwd: task.cwd,
-      input: [
-        {
-          type: "text",
-          text: prompt,
-          text_elements: [],
-        },
-      ],
+      input: inputItems,
       approvalPolicy: normalizedRuntimeConfig.approvalPolicy,
     });
 
@@ -1159,24 +1190,30 @@ class OpenAgentDaemon {
       this.store.patchTask(task.taskId, { cwd: normalizedCwd });
     }
 
+    const turnSelectionContext = options.selectionContext
+      ? normalizeCanvasSelection(options.selectionContext)
+      : task.selectionContext;
     const rawPrompt = String(options.rawPrompt || "");
-    const prompt = rawPrompt || buildCanvasPrompt(task.selectionContext, options.message || "", {
+    const prompt = rawPrompt || buildCanvasPrompt(turnSelectionContext, options.message || "", {
       cwd: task.cwd,
       forceContext: options.forceContext !== false,
     });
-    if (!prompt) {
+    const inputItems = buildTurnInputItems(turnSelectionContext, prompt, task.cwd);
+    if (inputItems.length === 0) {
       throw new Error("Nothing to send.");
     }
 
     const transcriptMessage = String(options.transcriptMessage || options.message || rawPrompt).trim()
-      || "Run the saved Canvas selection context.";
+      || "";
     const runtimeConfig = normalizeRuntimeConfig(options.runtimeConfig || task.runtimeConfig);
-    this.store.appendMessage(task.taskId, {
-      id: `user:${Date.now()}`,
-      role: "user",
-      kind: "chat",
-      text: transcriptMessage,
-    });
+    if (transcriptMessage) {
+      this.store.appendMessage(task.taskId, {
+        id: `user:${Date.now()}`,
+        role: "user",
+        kind: "chat",
+        text: transcriptMessage,
+      });
+    }
 
     let nextTask = this.store.patchTask(task.taskId, {
       status: "starting",
@@ -1198,7 +1235,7 @@ class OpenAgentDaemon {
         cwd: normalizedCwd,
         runtimeConfig,
       });
-      const turn = await this.client.sendTurn(nextTask, prompt, runtimeConfig);
+      const turn = await this.client.sendTurn(nextTask, inputItems, runtimeConfig);
       nextTask = this.store.patchTask(nextTask.taskId, {
         currentTurnId: turn?.id || null,
         status: "running",
@@ -1440,6 +1477,7 @@ class OpenAgentDaemon {
           rawPrompt: body.rawPrompt || "",
           transcriptMessage: body.transcriptMessage || "",
           forceContext: body.forceContext !== false,
+          selectionContext: body.selectionContext || null,
           runtimeConfig: body.runtimeConfig || {},
         });
         sendJson(response, 200, { task: this.taskPayload(task) });

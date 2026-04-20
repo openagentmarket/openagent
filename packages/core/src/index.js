@@ -49,13 +49,25 @@ function normalizeCanvasSelection(input = {}) {
         .filter((file) => file.path)
     : [];
 
+  const imageFiles = Array.isArray(input.imageFiles)
+    ? input.imageFiles
+        .map((file, index) => ({
+          id: String(file?.id || `image-${index + 1}`),
+          path: String(file?.path || "").trim(),
+          absolutePath: String(file?.absolutePath || "").trim(),
+          name: String(file?.name || "").trim(),
+          mimeType: String(file?.mimeType || "").trim(),
+        }))
+        .filter((file) => file.path)
+    : [];
+
   const warnings = Array.isArray(input.warnings)
     ? input.warnings.map((warning) => String(warning)).filter(Boolean)
     : [];
 
   const nodeIds = normalizeStringArray(input.nodeIds).sort();
   const canvasPath = String(input.canvasPath || "").trim();
-  const title = String(input.title || "").trim() || deriveTitle(canvasPath, textBlocks, markdownFiles);
+  const title = String(input.title || "").trim() || deriveTitle(canvasPath, textBlocks, markdownFiles, imageFiles);
 
   return {
     canvasPath,
@@ -63,6 +75,7 @@ function normalizeCanvasSelection(input = {}) {
     nodeIds,
     textBlocks,
     markdownFiles,
+    imageFiles,
     warnings,
     title,
   };
@@ -128,7 +141,7 @@ function buildMarkdownFilePromptBlock(file, index, options = {}) {
     : `Markdown file ${index + 1}`;
 }
 
-function shouldAppendUserRequest(textBlocks, markdownFiles, trimmedMessage, includeContext = true) {
+function shouldAppendUserRequest(textBlocks, markdownFiles, imageFiles, trimmedMessage, includeContext = true) {
   if (!trimmedMessage) {
     return false;
   }
@@ -145,10 +158,14 @@ function shouldAppendUserRequest(textBlocks, markdownFiles, trimmedMessage, incl
     return true;
   }
 
+  if (Array.isArray(imageFiles) && imageFiles.length > 0) {
+    return true;
+  }
+
   return String(textBlocks[0]?.text || "").trim() !== trimmedMessage;
 }
 
-function deriveTitle(canvasPath, textBlocks, markdownFiles) {
+function deriveTitle(canvasPath, textBlocks, markdownFiles, imageFiles = []) {
   if (textBlocks.length > 0) {
     const firstLine = textBlocks[0].text.split("\n")[0].trim();
     if (firstLine) {
@@ -158,6 +175,10 @@ function deriveTitle(canvasPath, textBlocks, markdownFiles) {
 
   if (markdownFiles.length > 0) {
     return markdownFiles[0].name || markdownFiles[0].path;
+  }
+
+  if (imageFiles.length > 0) {
+    return imageFiles[0].name || imageFiles[0].path;
   }
 
   return canvasPath ? `${canvasPath} selection` : "Canvas selection";
@@ -306,6 +327,15 @@ function buildCanvasPrompt(selectionContext, userMessage = "", options = {}) {
   const selection = normalizeCanvasSelection(selectionContext);
   const trimmedMessage = String(userMessage || "").trim();
   const includeContext = options.forceContext !== false;
+  if (
+    includeContext
+    && !trimmedMessage
+    && selection.textBlocks.length === 0
+    && selection.markdownFiles.length === 0
+    && selection.imageFiles.length > 0
+  ) {
+    return "";
+  }
   const parts = [];
 
   if (includeContext) {
@@ -328,13 +358,22 @@ function buildCanvasPrompt(selectionContext, userMessage = "", options = {}) {
       );
     }
 
+    if (selection.imageFiles.length > 0) {
+      parts.push("Selected image files are attached to this turn as image inputs. Use them as part of the Canvas context.");
+      parts.push(
+        selection.imageFiles
+          .map((file, index) => `Image file ${index + 1}: ${file.path || file.name || "Untitled"}`)
+          .join("\n\n")
+      );
+    }
+
     if (selection.warnings.length > 0) {
       parts.push(`Resolver warnings:\n- ${selection.warnings.join("\n- ")}`);
     }
   }
 
   if (trimmedMessage) {
-    if (shouldAppendUserRequest(selection.textBlocks, selection.markdownFiles, trimmedMessage, includeContext)) {
+    if (shouldAppendUserRequest(selection.textBlocks, selection.markdownFiles, selection.imageFiles, trimmedMessage, includeContext)) {
       parts.push(trimmedMessage);
     }
   } else if (includeContext) {

@@ -553,6 +553,53 @@
   background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-primary));
 }
 
+.oa-selection-message {
+  width: min(78%, 42rem);
+}
+
+.oa-selection-image-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.oa-selection-image-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.oa-selection-image {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 12%, var(--oa-border-soft));
+  background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+}
+
+.oa-selection-image-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  border-radius: 12px;
+  border: 1px dashed var(--oa-border-soft);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  text-align: center;
+  padding: 12px;
+}
+
+.oa-selection-image-caption {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .oa-chat-message.oa-message-tool,
 .oa-chat-message.oa-message-tool.oa-role-user,
 .oa-chat-message.oa-message-tool.oa-role-assistant,

@@ -40,6 +40,7 @@ Today the main context types are:
 
 - text nodes
 - markdown file nodes
+- image file nodes
 - node links and local Canvas structure used to recover follow-up context
 
 If you are new to Canvas itself, the fastest supporting reference is [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md).
@@ -107,6 +108,8 @@ Typical patterns:
 
 - one text node with a focused request
 - a text node plus nearby markdown file nodes
+- one image file node by itself
+- one text node plus connected image file nodes
 - a text node inside a group whose markdown file nodes should become default group context
 - a previous assistant result node plus a follow-up request node
 
@@ -130,6 +133,12 @@ For new threads, OpenAgent also supports `group context`:
 
 This is useful when you want a group to act like a small context bucket around one prompt node.
 
+Image behavior works a little differently from markdown:
+
+- if you select only an image file node, OpenAgent starts a thread with the image attached and no synthetic text wrapper
+- if you select one text node and it has connected or grouped image file nodes, the text stays the raw prompt and the images are attached separately
+- if you want to be certain an image is present on a later turn, either reselect the image node or use a connected follow-up pattern that preserves that image context
+
 For the exact rule and overlap behavior, see [docs/GROUP_CONTEXT.md](./GROUP_CONTEXT.md).
 
 ### 4. Review the Result
@@ -140,6 +149,8 @@ Use the OpenAgent side panel to inspect:
 - recent messages
 - tool output
 - task history
+
+For image-backed tasks, the panel also shows the selected image attachment in the chat flow so you can see what was sent to Codex, even for image-only turns.
 
 The plugin also writes the final answer back into the Canvas so the graph stays current.
 
@@ -189,6 +200,12 @@ OpenAgent will try to reuse the same daemon task and Codex thread while changing
 
 - Make sure you selected the new follow-up source node, not the old result node.
 - If you changed follow-up behavior in code, run `pnpm run test:obsidian-follow-up-chain`.
+
+### An image does not show up in the panel
+
+- Make sure the selected Canvas file node points to a supported raster image type such as `png`, `jpg`, `jpeg`, `gif`, or `webp`.
+- Reopen the OpenAgent panel after starting the thread if you were already on the task.
+- Re-run `pnpm run test:obsidian-image-only-new-thread` if you are verifying the image-only path during development.
 
 ## Current Limitations
 

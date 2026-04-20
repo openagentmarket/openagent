@@ -235,7 +235,7 @@ function buildMarkdownFilePromptBlock(file, index, options = {}) {
     : `Markdown file ${index + 1}`;
 }
 
-function shouldAppendUserRequest(textBlocks, markdownFiles, trimmedMessage, includeContext = true) {
+function shouldAppendUserRequest(textBlocks, markdownFiles, imageFiles, trimmedMessage, includeContext = true) {
   if (!trimmedMessage) {
     return false;
   }
@@ -252,6 +252,10 @@ function shouldAppendUserRequest(textBlocks, markdownFiles, trimmedMessage, incl
     return true;
   }
 
+  if (Array.isArray(imageFiles) && imageFiles.length > 0) {
+    return true;
+  }
+
   return String(textBlocks[0]?.text || "").trim() !== trimmedMessage;
 }
 
@@ -261,6 +265,9 @@ function buildCanvasSelectionPrompt(selection, userMessage, options = {}) {
     : [];
   const markdownFiles = Array.isArray(selection?.markdownFiles)
     ? selection.markdownFiles.filter((file) => String(file?.path || "").trim())
+    : [];
+  const imageFiles = Array.isArray(selection?.imageFiles)
+    ? selection.imageFiles.filter((file) => String(file?.path || "").trim())
     : [];
   const warnings = Array.isArray(selection?.warnings)
     ? selection.warnings.map((warning) => String(warning || "").trim()).filter(Boolean)
@@ -287,12 +294,21 @@ function buildCanvasSelectionPrompt(selection, userMessage, options = {}) {
     );
   }
 
+  if (imageFiles.length > 0) {
+    parts.push("Selected image files are attached to this turn as image inputs. Use them as part of the Canvas context.");
+    parts.push(
+      imageFiles
+        .map((file, index) => `Image file ${index + 1}: ${String(file.path || file.name || "Untitled")}`)
+        .join("\n\n")
+    );
+  }
+
   if (warnings.length > 0) {
     parts.push(`Resolver warnings:\n- ${warnings.join("\n- ")}`);
   }
 
-  if (shouldAppendUserRequest(textBlocks, markdownFiles, trimmedMessage, true)) {
-    parts.push(`User request:\n${trimmedMessage}`);
+  if (shouldAppendUserRequest(textBlocks, markdownFiles, imageFiles, trimmedMessage, true)) {
+    parts.push(trimmedMessage);
   }
 
   return parts.join("\n\n").trim();
@@ -1512,6 +1528,7 @@ class CanvasSelectionResolver {
 
     const textBlocks = [];
     const markdownFiles = [];
+    const imageFiles = [];
     const warnings = [];
 
     for (const node of selectedNodes) {
@@ -1531,9 +1548,11 @@ class CanvasSelectionResolver {
       }
 
       if (node.type === "file") {
-        const markdownFile = await this.buildCanvasMarkdownFileSelectionEntry(node, warnings);
-        if (markdownFile) {
-          markdownFiles.push(markdownFile);
+        const selectionEntry = await this.buildCanvasFileSelectionEntry(node, warnings);
+        if (selectionEntry?.kind === "markdown") {
+          markdownFiles.push(selectionEntry.value);
+        } else if (selectionEntry?.kind === "image") {
+          imageFiles.push(selectionEntry.value);
         }
         continue;
       }
@@ -1552,8 +1571,9 @@ class CanvasSelectionResolver {
       nodeIds: normalizedNodeIds,
       textBlocks,
       markdownFiles,
+      imageFiles,
       warnings,
-      title: this.deriveTitle(file.basename, textBlocks, markdownFiles),
+      title: this.deriveTitle(file.basename, textBlocks, markdownFiles, imageFiles),
     };
   }
 
@@ -1580,32 +1600,72 @@ class CanvasSelectionResolver {
     return containingGroups[0] || null;
   }
 
-  async buildCanvasMarkdownFileSelectionEntry(node, warnings) {
+  async buildCanvasFileSelectionEntry(node, warnings) {
     const filePath = typeof node?.file === "string" ? node.file.trim() : "";
-    const abstractFile = await this.waitForMarkdownCanvasFile(filePath);
+    const abstractFile = await this.waitForCanvasFile(filePath);
     if (!(abstractFile instanceof TFile)) {
       warnings.push(`Missing file node target: ${filePath}`);
       return null;
     }
 
-    if (abstractFile.extension !== "md") {
-      warnings.push(`Unsupported file node type skipped: ${filePath}`);
-      return null;
-    }
-
     const vaultBasePath = this.getVaultBasePath();
-    return {
+    const baseEntry = {
       id: String(node?.id || ""),
       path: abstractFile.path,
       absolutePath: vaultBasePath
         ? this.resolveVaultPath(vaultBasePath, abstractFile.path)
         : "",
       name: abstractFile.basename,
-      content: await this.app.vault.cachedRead(abstractFile),
     };
+
+    if (abstractFile.extension === "md") {
+      return {
+        kind: "markdown",
+        value: {
+          ...baseEntry,
+          content: await this.app.vault.cachedRead(abstractFile),
+        },
+      };
+    }
+
+    if (this.isSupportedCanvasImageFile(abstractFile)) {
+      return {
+        kind: "image",
+        value: {
+          ...baseEntry,
+          mimeType: this.getCanvasImageMimeType(abstractFile),
+        },
+      };
+    }
+
+    warnings.push(`Unsupported file node type skipped: ${filePath}`);
+    return null;
   }
 
-  async waitForMarkdownCanvasFile(filePath, options = {}) {
+  isSupportedCanvasImageFile(file) {
+    const extension = String(file?.extension || "").trim().toLowerCase();
+    return extension === "png"
+      || extension === "jpg"
+      || extension === "jpeg"
+      || extension === "gif"
+      || extension === "webp";
+  }
+
+  getCanvasImageMimeType(file) {
+    const extension = String(file?.extension || "").trim().toLowerCase();
+    if (extension === "jpg" || extension === "jpeg") {
+      return "image/jpeg";
+    }
+    if (extension === "gif") {
+      return "image/gif";
+    }
+    if (extension === "webp") {
+      return "image/webp";
+    }
+    return "image/png";
+  }
+
+  async waitForCanvasFile(filePath, options = {}) {
     const normalizedPath = String(filePath || "").trim();
     const timeoutMs = Math.max(0, toFiniteNumber(options.timeoutMs, 4_000));
     const pollMs = Math.max(25, toFiniteNumber(options.pollMs, 100));
@@ -1646,7 +1706,7 @@ class CanvasSelectionResolver {
     return connectedNodeIds;
   }
 
-  async appendImplicitMarkdownFiles(nodes, warnings, collectedFiles, seenNodeIds, predicate) {
+  async appendImplicitCanvasFiles(nodes, warnings, collectedMarkdownFiles, collectedImageFiles, seenNodeIds, predicate) {
     const candidateNodes = (Array.isArray(nodes) ? nodes : [])
       .filter((node) => {
         const nodeId = String(node?.id || "").trim();
@@ -1658,27 +1718,33 @@ class CanvasSelectionResolver {
       .sort(compareCanvasNodeOrder);
 
     for (const node of candidateNodes) {
-      const markdownFile = await this.buildCanvasMarkdownFileSelectionEntry(node, warnings);
-      if (!markdownFile) {
+      const selectionEntry = await this.buildCanvasFileSelectionEntry(node, warnings);
+      const fileEntry = selectionEntry?.value || null;
+      if (!fileEntry) {
         continue;
       }
 
-      const nodeId = String(markdownFile.id || "").trim();
+      const nodeId = String(fileEntry.id || "").trim();
       if (!nodeId || seenNodeIds.has(nodeId)) {
         continue;
       }
 
       seenNodeIds.add(nodeId);
-      collectedFiles.push(markdownFile);
+      if (selectionEntry.kind === "markdown") {
+        collectedMarkdownFiles.push(fileEntry);
+      } else if (selectionEntry.kind === "image") {
+        collectedImageFiles.push(fileEntry);
+      }
     }
   }
 
-  async addImplicitCanvasMarkdownContext(selection) {
+  async addImplicitCanvasFileContext(selection) {
     const canvasPath = String(selection?.canvasPath || "").trim();
     const nodeIds = Array.isArray(selection?.nodeIds) ? selection.nodeIds.map((nodeId) => String(nodeId)).filter(Boolean) : [];
     const textBlocks = Array.isArray(selection?.textBlocks) ? selection.textBlocks : [];
     const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
-    if (!canvasPath || nodeIds.length !== 1 || textBlocks.length !== 1 || markdownFiles.length > 0) {
+    const imageFiles = Array.isArray(selection?.imageFiles) ? selection.imageFiles : [];
+    if (!canvasPath || nodeIds.length !== 1 || textBlocks.length !== 1 || (markdownFiles.length > 0 || imageFiles.length > 0)) {
       return selection;
     }
 
@@ -1703,45 +1769,56 @@ class CanvasSelectionResolver {
 
     const edges = Array.isArray(parsed?.edges) ? parsed.edges : [];
     const implicitMarkdownFiles = [];
+    const implicitImageFiles = [];
     const nextWarnings = Array.isArray(selection?.warnings) ? [...selection.warnings] : [];
-    const seenNodeIds = new Set(markdownFiles.map((file) => String(file?.id || "").trim()).filter(Boolean));
+    const seenNodeIds = new Set([
+      ...markdownFiles.map((file) => String(file?.id || "").trim()),
+      ...imageFiles.map((file) => String(file?.id || "").trim()),
+    ].filter(Boolean));
     const connectedNodeIds = this.collectConnectedCanvasNodeIds(edges, sourceNodeId);
-    await this.appendImplicitMarkdownFiles(
+    await this.appendImplicitCanvasFiles(
       nodes,
       nextWarnings,
       implicitMarkdownFiles,
+      implicitImageFiles,
       seenNodeIds,
       (node) => connectedNodeIds.has(String(node?.id || "").trim())
     );
 
     const containingGroup = this.findSmallestCanvasGroupForNode(nodes, sourceNode);
     if (containingGroup) {
-      await this.appendImplicitMarkdownFiles(
+      await this.appendImplicitCanvasFiles(
         nodes,
         nextWarnings,
         implicitMarkdownFiles,
+        implicitImageFiles,
         seenNodeIds,
         (node) => String(node?.id || "").trim() !== sourceNodeId
           && this.doesCanvasGroupContainNode(containingGroup, node)
       );
     }
 
-    if (implicitMarkdownFiles.length === 0) {
+    if (implicitMarkdownFiles.length === 0 && implicitImageFiles.length === 0) {
       return selection;
     }
 
     return {
       ...selection,
       markdownFiles: implicitMarkdownFiles,
+      imageFiles: implicitImageFiles,
       warnings: nextWarnings,
     };
   }
 
-  async addImplicitGroupMarkdownContext(selection) {
-    return this.addImplicitCanvasMarkdownContext(selection);
+  async addImplicitCanvasMarkdownContext(selection) {
+    return this.addImplicitCanvasFileContext(selection);
   }
 
-  deriveTitle(canvasName, textBlocks, markdownFiles) {
+  async addImplicitGroupMarkdownContext(selection) {
+    return this.addImplicitCanvasFileContext(selection);
+  }
+
+  deriveTitle(canvasName, textBlocks, markdownFiles, imageFiles = []) {
     if (textBlocks.length > 0) {
       const firstLine = textBlocks[0].text.split("\n")[0].trim();
       if (firstLine) {
@@ -1751,6 +1828,10 @@ class CanvasSelectionResolver {
 
     if (markdownFiles.length > 0) {
       return markdownFiles[0].name || markdownFiles[0].path;
+    }
+
+    if (imageFiles.length > 0) {
+      return imageFiles[0].name || imageFiles[0].path;
     }
 
     return `${canvasName} selection`;
@@ -2996,17 +3077,40 @@ class OpenAgentView extends ItemView {
       detail.createDiv({ cls: "oa-banner oa-banner-error", text: activeTask.lastError });
     }
 
+    const selectionPreviewLines = this.plugin.getSelectionPreviewLines(activeTask.selectionContext);
+    if (selectionPreviewLines.length > 0) {
+      const contextSection = detail.createDiv({ cls: "oa-task-section oa-settings-card" });
+      contextSection.createDiv({ cls: "oa-detail-title", text: "Selected context" });
+      const summary = this.plugin.summarizeSelection(activeTask.selectionContext);
+      if (summary) {
+        contextSection.createDiv({ cls: "oa-task-meta", text: summary });
+      }
+      selectionPreviewLines.forEach((line, index) => {
+        contextSection.createDiv({
+          cls: index === 0 ? "oa-task-meta oa-selection-debug" : "oa-task-meta",
+          text: line,
+        });
+      });
+    }
+
     const messagesSection = detail.createDiv({ cls: "oa-messages-section" });
     const messages = Array.isArray(activeTask.messages) ? activeTask.messages : [];
     const messagesLoaded = this.plugin.taskHasLoadedMessages(activeTask);
     const messageCount = Math.max(Number(activeTask.messageCount) || 0, messages.length);
+    const renderSelectionImageBubble = () => {
+      const messageList = messagesSection.createDiv({ cls: "oa-message-list" });
+      this.plugin.renderSelectionImageMessage(messageList, activeTask.selectionContext);
+      return messageList;
+    };
     if (!messagesLoaded && messageCount > 0) {
+      renderSelectionImageBubble();
       messagesSection.createDiv({
         cls: "oa-muted",
         text: `Loading conversation (${messageCount} messages)...`,
       });
       this.restorePanelScrollState(panelScrollState, panelScrollKey);
     } else if (messages.length === 0) {
+      renderSelectionImageBubble();
       messagesSection.createDiv({ cls: "oa-muted", text: "No conversation yet." });
       this.restorePanelScrollState(panelScrollState, panelScrollKey);
     } else {
@@ -3036,7 +3140,7 @@ class OpenAgentView extends ItemView {
         );
       }
 
-      const messageList = messagesSection.createDiv({ cls: "oa-message-list" });
+      const messageList = renderSelectionImageBubble();
       messages.slice(firstVisibleIndex).forEach((message, index) => {
         const messageIndex = firstVisibleIndex + index;
         const isToolMessage = this.isToolMessage(message);
@@ -4233,6 +4337,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       let runMode = smokeMode || "default";
 
       if (request?.runTask !== false && smokeMode === "new-thread" && request?.forceNewTask === true) {
+        selection = await this.resolver.addImplicitCanvasFileContext(selection);
         const followUpResult = await this.runSelectionAsFollowUp(selection);
         if (followUpResult) {
           task = followUpResult.task;
@@ -4243,7 +4348,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
       if (!task) {
         if (request?.forceNewTask === true) {
-          selection = await this.resolver.addImplicitCanvasMarkdownContext(selection);
+          selection = await this.resolver.addImplicitCanvasFileContext(selection);
         }
 
         const response = await this.api.createTaskFromCanvasSelection({
@@ -4688,8 +4793,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       ? selection.nodeIds.map((nodeId) => String(nodeId)).filter(Boolean)
       : [];
     const textBlocks = Array.isArray(selection?.textBlocks) ? selection.textBlocks : [];
-    const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
-    if (!canvasPath || nodeIds.length !== 1 || textBlocks.length !== 1 || markdownFiles.length > 0) {
+    if (!canvasPath || nodeIds.length !== 1 || textBlocks.length !== 1) {
       return null;
     }
 
@@ -4748,11 +4852,25 @@ module.exports = class OpenAgentPlugin extends Plugin {
       throwOnError: true,
     });
 
-    const response = await this.api.sendMessage(
-      task.taskId,
-      followUpTarget.message,
-      this.buildRuntimeConfigPayload()
-    );
+    const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
+    const imageFiles = Array.isArray(selection?.imageFiles) ? selection.imageFiles : [];
+    const runtimeConfig = this.buildRuntimeConfigPayload();
+    const rawPrompt = markdownFiles.length > 0
+      ? buildCanvasSelectionPrompt(selection, followUpTarget.message, { cwd: task.cwd })
+      : followUpTarget.message;
+    const response = (markdownFiles.length > 0 || imageFiles.length > 0)
+      ? await this.api.runTask(task.taskId, {
+          rawPrompt,
+          transcriptMessage: followUpTarget.message,
+          forceContext: false,
+          selectionContext: selection,
+          runtimeConfig,
+        })
+      : await this.api.sendMessage(
+          task.taskId,
+          followUpTarget.message,
+          runtimeConfig
+        );
 
     return {
       task: this.mergeTask(response.task),
@@ -5517,9 +5635,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
       : [];
     const textBlocks = Array.isArray(selection?.textBlocks) ? selection.textBlocks : [];
     const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
+    const imageFiles = Array.isArray(selection?.imageFiles) ? selection.imageFiles : [];
     const hasSingleSupportedSource = (
       (textBlocks.length === 1)
       || (textBlocks.length === 0 && markdownFiles.length === 1)
+      || (textBlocks.length === 0 && markdownFiles.length === 0 && imageFiles.length === 1)
     );
     if (nodeIds.length !== 1 || !hasSingleSupportedSource) {
       return false;
@@ -6521,12 +6641,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
     try {
       let effectiveSelection = selection;
       if (options.forceNewTask === true) {
-        const followUpResult = await this.runSelectionAsFollowUp(selection);
+        effectiveSelection = await this.resolver.addImplicitCanvasFileContext(selection);
+        const followUpResult = await this.runSelectionAsFollowUp(effectiveSelection);
         if (followUpResult) {
           await this.appendDebugEvent("follow_up_requested", {
             taskId: followUpResult.task.taskId,
             message: followUpResult.message,
-            sourceNodeId: selection.nodeIds?.[0] || "",
+            sourceNodeId: effectiveSelection.nodeIds?.[0] || "",
           });
           this.runtimeIssue = "";
           await this.setActiveTask(followUpResult.task.taskId, { revealInActiveTab: true });
@@ -6534,8 +6655,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
           await this.refreshTask(followUpResult.task.taskId, { force: true });
           return;
         }
-
-        effectiveSelection = await this.resolver.addImplicitCanvasMarkdownContext(selection);
       }
 
       this.rememberSelectionSnapshot(effectiveSelection);
@@ -6545,6 +6664,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         nodeIds: effectiveSelection.nodeIds,
         textCount: effectiveSelection.textBlocks?.length || 0,
         fileCount: effectiveSelection.markdownFiles?.length || 0,
+        imageCount: effectiveSelection.imageFiles?.length || 0,
       });
       const selectionSummary = this.summarizeSelection(effectiveSelection);
       const inferredCwd = this.resolveWorkspaceRepoPathForSelection(effectiveSelection) || this.resolver.inferWorkingDirectory(effectiveSelection);
@@ -6798,7 +6918,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   async readCanvasMarkdownFilePreviewEntry(node, warnings = []) {
     const filePath = typeof node?.file === "string" ? node.file.trim() : "";
-    const abstractFile = await this.resolver.waitForMarkdownCanvasFile(filePath, { timeoutMs: 0 });
+    const abstractFile = await this.resolver.waitForCanvasFile(filePath, { timeoutMs: 0 });
     if (!(abstractFile instanceof TFile)) {
       warnings.push(`Missing file node target: ${filePath}`);
       return null;
@@ -7615,6 +7735,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
   summarizeSelection(selection) {
     const textCount = Array.isArray(selection?.textBlocks) ? selection.textBlocks.length : 0;
     const fileCount = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles.length : 0;
+    const imageCount = Array.isArray(selection?.imageFiles) ? selection.imageFiles.length : 0;
     const parts = [];
 
     if (textCount > 0) {
@@ -7623,6 +7744,10 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     if (fileCount > 0) {
       parts.push(`${fileCount} markdown file${fileCount === 1 ? "" : "s"}`);
+    }
+
+    if (imageCount > 0) {
+      parts.push(`${imageCount} image file${imageCount === 1 ? "" : "s"}`);
     }
 
     const firstText = selection?.textBlocks?.[0]?.text;
@@ -7659,31 +7784,119 @@ module.exports = class OpenAgentPlugin extends Plugin {
       }
     });
 
+    (selection?.imageFiles || []).forEach((file, index) => {
+      const filePath = String(file?.path || "").trim();
+      lines.push(`Image file ${index + 1}: ${filePath || file?.name || "Untitled"}`);
+    });
+
     return lines;
+  }
+
+  getSelectionImageResourceUrl(file) {
+    const normalizedPath = String(file?.path || "").trim();
+    if (!normalizedPath) {
+      return String(file?.absolutePath || "").trim();
+    }
+
+    const abstractFile = this.app.vault.getAbstractFileByPath(normalizedPath);
+    if (abstractFile instanceof TFile) {
+      if (typeof this.app.vault.getResourcePath === "function") {
+        try {
+          return this.app.vault.getResourcePath(abstractFile);
+        } catch {
+          // Fall through to adapter-based lookup.
+        }
+      }
+
+      if (typeof this.app.vault.adapter?.getResourcePath === "function") {
+        try {
+          return this.app.vault.adapter.getResourcePath(normalizedPath);
+        } catch {
+          // Fall through to absolute path.
+        }
+      }
+    }
+
+    return String(file?.absolutePath || "").trim();
+  }
+
+  renderSelectionImageMessage(container, selection) {
+    const imageFiles = Array.isArray(selection?.imageFiles)
+      ? selection.imageFiles.filter((file) => String(file?.path || file?.absolutePath || "").trim())
+      : [];
+    if (imageFiles.length === 0) {
+      return null;
+    }
+
+    const item = container.createDiv({
+      cls: "oa-message oa-chat-message oa-role-user oa-selection-message",
+    });
+    item.createDiv({
+      cls: "oa-message-label",
+      text: imageFiles.length === 1 ? "Selected image" : "Selected images",
+    });
+
+    const gallery = item.createDiv({ cls: "oa-selection-image-gallery" });
+    imageFiles.forEach((file, index) => {
+      const src = this.getSelectionImageResourceUrl(file);
+      const card = gallery.createDiv({ cls: "oa-selection-image-card" });
+      if (src) {
+        card.createEl("img", {
+          cls: "oa-selection-image",
+          attr: {
+            src,
+            alt: String(file?.name || file?.path || `Selected image ${index + 1}`),
+          },
+        });
+      } else {
+        card.createDiv({
+          cls: "oa-selection-image-fallback",
+          text: "Image preview unavailable",
+        });
+      }
+      card.createDiv({
+        cls: "oa-selection-image-caption",
+        text: String(file?.path || file?.name || `Image file ${index + 1}`),
+      });
+    });
+
+    return item;
   }
 
   describeSelectionDebug(selection) {
     const nodeIds = Array.isArray(selection?.nodeIds) ? selection.nodeIds.filter(Boolean) : [];
     const textCount = Array.isArray(selection?.textBlocks) ? selection.textBlocks.length : 0;
     const fileCount = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles.length : 0;
+    const imageCount = Array.isArray(selection?.imageFiles) ? selection.imageFiles.length : 0;
     const warningCount = Array.isArray(selection?.warnings) ? selection.warnings.length : 0;
     const idsPreview = nodeIds.length > 0 ? nodeIds.join(", ") : "(none)";
-    return `Selection debug: ids=${idsPreview} | text=${textCount} | files=${fileCount} | warnings=${warningCount}`;
+    return `Selection debug: ids=${idsPreview} | text=${textCount} | files=${fileCount} | images=${imageCount} | warnings=${warningCount}`;
   }
 
   getNewThreadPromptFromSelection(selection, options = {}) {
     const textBlocks = Array.isArray(selection?.textBlocks) ? selection.textBlocks : [];
     const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
-    if (textBlocks.length === 0 && markdownFiles.length === 1) {
+    const imageFiles = Array.isArray(selection?.imageFiles) ? selection.imageFiles : [];
+    if (textBlocks.length === 0 && markdownFiles.length > 0 && imageFiles.length === 0) {
       return buildCanvasSelectionPrompt(
         selection,
-        "Use the selected markdown file as the primary context and continue with the most helpful next step.",
+        markdownFiles.length === 1
+          ? "Use the selected markdown file as the primary context and continue with the most helpful next step."
+          : "Use the selected markdown files as the primary context and continue with the most helpful next step.",
         options,
       );
     }
 
+    if (textBlocks.length === 0 && markdownFiles.length === 0 && imageFiles.length > 0) {
+      return "";
+    }
+
+    if (textBlocks.length === 0 && (markdownFiles.length > 0 || imageFiles.length > 0)) {
+      return markdownFiles.length > 0 ? buildCanvasSelectionPrompt(selection, "", options) : "";
+    }
+
     if (textBlocks.length !== 1) {
-      throw new Error("New thread currently requires selecting exactly one text node, optionally with markdown file context, or exactly one markdown file.");
+      throw new Error("New thread currently requires selecting exactly one text node, optionally with file context, or selecting only supported file nodes.");
     }
 
     const text = String(textBlocks[0]?.text || "");

@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { buildCanvasPrompt, createTaskBinding } from "../packages/core/src/index.js";
+import { writeVisualSmokePng } from "./lib/visual-smoke-image.mjs";
 
 const repoRoot = process.cwd();
 const fixtureVaultPath = path.join(repoRoot, "fixtures", "obsidian-smoke");
@@ -17,6 +18,9 @@ const groupedCanvasAbsolutePath = generatedGroupFixture.canvasAbsolutePath;
 const generatedLinkedFixture = createGeneratedLinkedFixture();
 const linkedCanvasRelativePath = path.join("OpenAgent Smoke", "linked-default-context.canvas");
 const linkedCanvasAbsolutePath = generatedLinkedFixture.canvasAbsolutePath;
+const generatedImageFixture = createGeneratedImageFixture();
+const imageCanvasRelativePath = path.join("OpenAgent Smoke", "image-context.canvas");
+const imageCanvasAbsolutePath = generatedImageFixture.canvasAbsolutePath;
 
 const mixedSelection = resolveCanvasSelection(fixtureVaultPath, mixedCanvasAbsolutePath);
 const mixedTask = createTaskBinding({
@@ -35,6 +39,23 @@ const groupedNewThreadPrompt = buildNewThreadPromptFromSelection(groupedNewThrea
 const linkedSelection = resolveCanvasSelection(generatedLinkedFixture.vaultRoot, linkedCanvasAbsolutePath, ["linked-prompt"]);
 const linkedNewThreadSelection = addImplicitCanvasMarkdownContext(generatedLinkedFixture.vaultRoot, linkedSelection);
 const linkedNewThreadPrompt = buildNewThreadPromptFromSelection(linkedNewThreadSelection);
+const imageSelection = resolveCanvasSelection(generatedImageFixture.vaultRoot, imageCanvasAbsolutePath, ["image-prompt", "image-file"]);
+const imageTask = createTaskBinding({
+  cwd: repoRoot,
+  status: "idle",
+  title: imageSelection.title,
+  selectionContext: imageSelection,
+});
+const imagePrompt = buildCanvasPrompt(imageSelection, "", { cwd: repoRoot });
+const imageNewThreadPrompt = buildNewThreadPromptFromSelection(imageSelection);
+const imageOnlySelection = resolveCanvasSelection(generatedImageFixture.vaultRoot, imageCanvasAbsolutePath, ["image-file"]);
+const imageOnlyTask = createTaskBinding({
+  cwd: repoRoot,
+  status: "idle",
+  title: imageOnlySelection.title,
+  selectionContext: imageOnlySelection,
+});
+const imageOnlyNewThreadPrompt = buildNewThreadPromptFromSelection(imageOnlySelection);
 
 assert(mixedSelection.canvasPath === mixedCanvasRelativePath, `Unexpected canvas path: ${mixedSelection.canvasPath}`);
 assert(mixedSelection.nodeIds.length === 2, `Expected 2 selected nodes, received ${mixedSelection.nodeIds.length}`);
@@ -60,8 +81,8 @@ assert(
   "Mixed new-thread prompt did not include the selected markdown file path."
 );
 assert(
-  mixedNewThreadPrompt.includes("User request:\nOpenAgent smoke test. Capture this canvas selection and create a task."),
-  "Mixed new-thread prompt did not treat the selected text node as the user request."
+  mixedNewThreadPrompt.includes("OpenAgent smoke test. Capture this canvas selection and create a task."),
+  "Mixed new-thread prompt did not preserve the selected text node."
 );
 
 assert(markdownSelection.canvasPath === markdownCanvasRelativePath, `Unexpected markdown canvas path: ${markdownSelection.canvasPath}`);
@@ -74,8 +95,8 @@ assert(
   "Markdown-only fixture content was not captured into the selection."
 );
 assert(
-  markdownNewThreadPrompt.includes("User request:\nUse the selected markdown file as the primary context and continue with the most helpful next step."),
-  "Markdown-only prompt did not include the expected user request."
+  !markdownNewThreadPrompt.includes("User request:\n"),
+  "Markdown-only prompt should not wrap generated guidance in a synthetic user request label."
 );
 assert(
   markdownNewThreadPrompt.includes(`Markdown file 1: ${normalizePromptPath(path.join(fixtureVaultPath, "OpenAgent Smoke", "markdown-thread-context.md"))}`),
@@ -123,6 +144,50 @@ assert(
   !linkedNewThreadPrompt.includes("UNLINKED_CONTEXT_SHOULD_NOT_APPEAR"),
   "Linked new-thread prompt incorrectly included markdown from an unlinked file node."
 );
+assert(imageSelection.canvasPath === imageCanvasRelativePath, `Unexpected image canvas path: ${imageSelection.canvasPath}`);
+assert(imageSelection.nodeIds.length === 2, `Expected 2 selected image-context nodes, received ${imageSelection.nodeIds.length}`);
+assert(imageSelection.textBlocks.length === 1, `Expected 1 image-context text node, received ${imageSelection.textBlocks.length}`);
+assert(imageSelection.markdownFiles.length === 0, `Expected 0 image-context markdown files, received ${imageSelection.markdownFiles.length}`);
+assert(imageSelection.imageFiles.length === 1, `Expected 1 image file, received ${imageSelection.imageFiles.length}`);
+assert(
+  imageSelection.imageFiles[0].path === "OpenAgent Smoke/image-context.png",
+  `Unexpected image file path: ${imageSelection.imageFiles[0]?.path || "(missing)"}`
+);
+assert(
+  imageSelection.imageFiles[0].absolutePath === generatedImageFixture.imageAbsolutePath,
+  `Unexpected image absolute path: ${imageSelection.imageFiles[0]?.absolutePath || "(missing)"}`
+);
+assert(
+  imageSelection.imageFiles[0].mimeType === "image/png",
+  `Unexpected image mime type: ${imageSelection.imageFiles[0]?.mimeType || "(missing)"}`
+);
+assert(
+  imagePrompt.includes(`Image file 1: OpenAgent Smoke/image-context.png`),
+  "Image prompt did not include the selected image file."
+);
+assert(
+  imageNewThreadPrompt === "Inspect the selected image and explain what kind of asset it is.",
+  `Unexpected image new-thread prompt: ${imageNewThreadPrompt || "(empty)"}`
+);
+assert(
+  imageNewThreadPrompt.includes("Inspect the selected image and explain what kind of asset it is."),
+  "Image new-thread prompt did not preserve the selected text node."
+);
+assert(imageTask.selectionContext.imageFiles.length === 1, `Task selection image count mismatch: ${imageTask.selectionContext.imageFiles.length}`);
+assert(imageOnlySelection.canvasPath === imageCanvasRelativePath, `Unexpected image-only canvas path: ${imageOnlySelection.canvasPath}`);
+assert(imageOnlySelection.nodeIds.length === 1, `Expected 1 selected image-only node, received ${imageOnlySelection.nodeIds.length}`);
+assert(imageOnlySelection.textBlocks.length === 0, `Expected 0 image-only text nodes, received ${imageOnlySelection.textBlocks.length}`);
+assert(imageOnlySelection.markdownFiles.length === 0, `Expected 0 image-only markdown files, received ${imageOnlySelection.markdownFiles.length}`);
+assert(imageOnlySelection.imageFiles.length === 1, `Expected 1 image-only file, received ${imageOnlySelection.imageFiles.length}`);
+assert(
+  imageOnlyNewThreadPrompt === "",
+  `Expected image-only new-thread prompt to be empty, received: ${imageOnlyNewThreadPrompt || "(non-empty)"}`
+);
+assert(
+  !imageOnlyNewThreadPrompt.includes(`Image file 1: OpenAgent Smoke/image-context.png`),
+  "Image-only new-thread prompt should not include image wrapper text."
+);
+assert(imageOnlyTask.selectionContext.imageFiles.length === 1, `Image-only task selection image count mismatch: ${imageOnlyTask.selectionContext.imageFiles.length}`);
 
 console.log(`Headless canvas smoke passed for ${mixedTask.taskId}`);
 console.log(JSON.stringify({
@@ -140,6 +205,12 @@ console.log(JSON.stringify({
   linkedCanvasPath: linkedSelection.canvasPath,
   linkedNodeIds: linkedSelection.nodeIds,
   linkedImplicitMarkdownPath: linkedNewThreadSelection.markdownFiles[0].path,
+  imageTaskId: imageTask.taskId,
+  imageCanvasPath: imageSelection.canvasPath,
+  imageNodeIds: imageSelection.nodeIds,
+  imagePath: imageSelection.imageFiles[0].path,
+  imageOnlyTaskId: imageOnlyTask.taskId,
+  imageOnlyNodeIds: imageOnlySelection.nodeIds,
 }, null, 2));
 
 function resolveCanvasSelection(vaultRoot, canvasPath, selectedNodeIds = null) {
@@ -149,6 +220,7 @@ function resolveCanvasSelection(vaultRoot, canvasPath, selectedNodeIds = null) {
     : null;
   const textBlocks = [];
   const markdownFiles = [];
+  const imageFiles = [];
   const warnings = [];
 
   for (const node of Array.isArray(parsed?.nodes) ? parsed.nodes : []) {
@@ -183,29 +255,61 @@ function resolveCanvasSelection(vaultRoot, canvasPath, selectedNodeIds = null) {
       continue;
     }
 
-    if (path.extname(absoluteFilePath).toLowerCase() !== ".md") {
-      warnings.push(`Unsupported file node type skipped: ${relativeFilePath}`);
+    const extension = path.extname(absoluteFilePath).toLowerCase();
+    if (extension === ".md") {
+      markdownFiles.push({
+        id: nodeId,
+        path: relativeFilePath,
+        absolutePath: absoluteFilePath,
+        name: path.basename(relativeFilePath, ".md"),
+        content: fs.readFileSync(absoluteFilePath, "utf8"),
+      });
       continue;
     }
 
-    markdownFiles.push({
-      id: nodeId,
-      path: relativeFilePath,
-      absolutePath: absoluteFilePath,
-      name: path.basename(relativeFilePath, ".md"),
-      content: fs.readFileSync(absoluteFilePath, "utf8"),
-    });
+    if (extension === ".png" || extension === ".jpg" || extension === ".jpeg" || extension === ".gif" || extension === ".webp") {
+      imageFiles.push({
+        id: nodeId,
+        path: relativeFilePath,
+        absolutePath: absoluteFilePath,
+        name: path.basename(relativeFilePath, extension),
+        mimeType: imageMimeTypeForExtension(extension),
+      });
+      continue;
+    }
+
+    if (selectedIdSet && selectedIdSet.has(nodeId)) {
+      warnings.push(`Unsupported file node type skipped: ${relativeFilePath}`);
+    }
   }
 
   return {
     canvasPath: path.relative(vaultRoot, canvasPath),
     canvasName: path.basename(canvasPath, ".canvas"),
-    nodeIds: [...textBlocks.map((block) => block.id), ...markdownFiles.map((file) => file.id)].sort(),
+    nodeIds: [
+      ...textBlocks.map((block) => block.id),
+      ...markdownFiles.map((file) => file.id),
+      ...imageFiles.map((file) => file.id),
+    ].sort(),
     textBlocks,
     markdownFiles,
+    imageFiles,
     warnings,
-    title: deriveTitle(path.basename(canvasPath, ".canvas"), textBlocks, markdownFiles),
+    title: deriveTitle(path.basename(canvasPath, ".canvas"), textBlocks, markdownFiles, imageFiles),
   };
+}
+
+function imageMimeTypeForExtension(extension) {
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  return "image/png";
 }
 
 function createGeneratedGroupFixture() {
@@ -343,6 +447,49 @@ function createGeneratedLinkedFixture() {
     vaultRoot,
     canvasAbsolutePath,
     markdownAbsolutePath,
+  };
+}
+
+function createGeneratedImageFixture() {
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openagent-headless-image-"));
+  const smokeDir = path.join(vaultRoot, "OpenAgent Smoke");
+  const canvasAbsolutePath = path.join(smokeDir, "image-context.canvas");
+  const imageAbsolutePath = path.join(smokeDir, "image-context.png");
+  fs.mkdirSync(smokeDir, { recursive: true });
+  writeVisualSmokePng(imageAbsolutePath);
+  fs.writeFileSync(canvasAbsolutePath, `${JSON.stringify({
+    nodes: [
+      {
+        id: "image-prompt",
+        type: "text",
+        x: 80,
+        y: 80,
+        width: 360,
+        height: 160,
+        text: "Inspect the selected image and explain what kind of asset it is.",
+      },
+      {
+        id: "image-file",
+        type: "file",
+        x: 500,
+        y: 80,
+        width: 320,
+        height: 240,
+        file: "OpenAgent Smoke/image-context.png",
+      },
+    ],
+    edges: [
+      {
+        id: "image-edge",
+        fromNode: "image-prompt",
+        toNode: "image-file",
+      },
+    ],
+  }, null, 2)}\n`, "utf8");
+  return {
+    vaultRoot,
+    canvasAbsolutePath,
+    imageAbsolutePath,
   };
 }
 
@@ -528,7 +675,7 @@ function toFiniteNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function deriveTitle(canvasName, textBlocks, markdownFiles) {
+function deriveTitle(canvasName, textBlocks, markdownFiles, imageFiles = []) {
   if (textBlocks.length > 0) {
     const firstLine = textBlocks[0].text.split("\n")[0].trim();
     if (firstLine) {
@@ -540,6 +687,10 @@ function deriveTitle(canvasName, textBlocks, markdownFiles) {
     return markdownFiles[0].name || markdownFiles[0].path;
   }
 
+  if (imageFiles.length > 0) {
+    return imageFiles[0].name || imageFiles[0].path;
+  }
+
   return `${canvasName} selection`;
 }
 
@@ -549,6 +700,9 @@ function buildCanvasSelectionPrompt(selection, userMessage, options = {}) {
     : [];
   const markdownFiles = Array.isArray(selection?.markdownFiles)
     ? selection.markdownFiles.filter((file) => String(file?.path || "").trim())
+    : [];
+  const imageFiles = Array.isArray(selection?.imageFiles)
+    ? selection.imageFiles.filter((file) => String(file?.path || "").trim())
     : [];
   const warnings = Array.isArray(selection?.warnings)
     ? selection.warnings.map((warning) => String(warning || "").trim()).filter(Boolean)
@@ -567,9 +721,19 @@ function buildCanvasSelectionPrompt(selection, userMessage, options = {}) {
   }
 
   if (markdownFiles.length > 0) {
+    parts.push("Before answering, open and read each linked markdown file from disk. Use the file contents as required context, not just the link text.");
     parts.push(
       markdownFiles
         .map((file, index) => buildMarkdownFilePromptBlock(file, index, options))
+        .join("\n\n")
+    );
+  }
+
+  if (imageFiles.length > 0) {
+    parts.push("Selected image files are attached to this turn as image inputs. Use them as part of the Canvas context.");
+    parts.push(
+      imageFiles
+        .map((file, index) => `Image file ${index + 1}: ${String(file.path || file.name || "Untitled")}`)
         .join("\n\n")
     );
   }
@@ -579,7 +743,7 @@ function buildCanvasSelectionPrompt(selection, userMessage, options = {}) {
   }
 
   if (trimmedMessage) {
-    parts.push(`User request:\n${trimmedMessage}`);
+    parts.push(trimmedMessage);
   }
 
   return parts.join("\n\n").trim();
@@ -634,16 +798,27 @@ function buildMarkdownFilePromptBlock(file, index, options = {}) {
 function buildNewThreadPromptFromSelection(selection) {
   const textBlocks = Array.isArray(selection?.textBlocks) ? selection.textBlocks : [];
   const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
-  if (textBlocks.length === 0 && markdownFiles.length === 1) {
+  const imageFiles = Array.isArray(selection?.imageFiles) ? selection.imageFiles : [];
+  if (textBlocks.length === 0 && markdownFiles.length > 0 && imageFiles.length === 0) {
     return buildCanvasSelectionPrompt(
       selection,
-      "Use the selected markdown file as the primary context and continue with the most helpful next step.",
+      markdownFiles.length === 1
+        ? "Use the selected markdown file as the primary context and continue with the most helpful next step."
+        : "Use the selected markdown files as the primary context and continue with the most helpful next step.",
       { cwd: repoRoot },
     );
   }
 
+  if (textBlocks.length === 0 && markdownFiles.length === 0 && imageFiles.length > 0) {
+    return "";
+  }
+
+  if (textBlocks.length === 0 && (markdownFiles.length > 0 || imageFiles.length > 0)) {
+    return markdownFiles.length > 0 ? buildCanvasSelectionPrompt(selection, "", { cwd: repoRoot }) : "";
+  }
+
   if (textBlocks.length !== 1) {
-    throw new Error("New thread currently requires selecting exactly one text node, optionally with markdown file context, or exactly one markdown file.");
+    throw new Error("New thread currently requires selecting exactly one text node, optionally with file context, or selecting only supported file nodes.");
   }
 
   const text = String(textBlocks[0]?.text || "");
