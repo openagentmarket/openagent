@@ -566,6 +566,22 @@ function formatTaskListDayLabel(dayTimestamp) {
   });
 }
 
+function formatTaskListTimeLabel(timestamp) {
+  const normalizedTimestamp = Number(timestamp);
+  if (!Number.isFinite(normalizedTimestamp) || normalizedTimestamp <= 0) {
+    return "";
+  }
+
+  try {
+    return new Date(normalizedTimestamp).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
 function autoArrangeCanvasNodes(nodes, edges) {
   const originalNodes = Array.isArray(nodes)
     ? nodes
@@ -2582,7 +2598,20 @@ class OpenAgentView extends ItemView {
         cls: `oa-task-item oa-thread-list-item${options.activeTask?.taskId === task.taskId ? " is-active" : ""}`,
       });
       const itemHeader = item.createDiv({ cls: "oa-task-item-header" });
-      itemHeader.createDiv({ cls: "oa-task-title oa-thread-list-title", text: task.title || "Untitled task" });
+      const itemMain = itemHeader.createDiv({ cls: "oa-thread-list-main" });
+      itemMain.createDiv({ cls: "oa-task-title oa-thread-list-title", text: task.title || "Untitled task" });
+      const metaParts = [];
+      const conversationTimestamp = this.plugin.getTaskConversationLastMessageTimestamp(task);
+      const conversationTimeLabel = formatTaskListTimeLabel(conversationTimestamp);
+      if (conversationTimeLabel) {
+        metaParts.push(conversationTimeLabel);
+      }
+      if (metaParts.length > 0) {
+        itemMain.createDiv({
+          cls: "oa-thread-list-meta",
+          text: metaParts.join("  •  "),
+        });
+      }
       if (this.plugin.isTaskRunning(task)) {
         itemHeader.createDiv({
           cls: "oa-status-tag is-running",
@@ -2908,13 +2937,18 @@ class OpenAgentView extends ItemView {
       if (selectedGroupContextPreview) {
         this.renderGroupContextPreview(detail, selectedGroupContextPreview);
       } else {
-        detail.createDiv({
-          cls: "oa-muted",
+        const emptyStateCard = detail.createDiv({ cls: "oa-empty-state-card" });
+        emptyStateCard.createDiv({
+          cls: "oa-empty-state-title",
+          text: activeCanvasPath ? "No conversation selected" : "Open a canvas to start",
+        });
+        emptyStateCard.createDiv({
+          cls: "oa-muted oa-empty-state-copy",
           text: activeCanvasPath
             ? "Select a canvas node and start a conversation."
             : "Open a Canvas and select a node to start a conversation.",
         });
-        const emptyActions = detail.createDiv({ cls: "oa-action-row" });
+        const emptyActions = emptyStateCard.createDiv({ cls: "oa-action-row oa-empty-state-actions" });
         this.makeButton(emptyActions, "New conversation", () => this.plugin.handleNewThreadFromSelectionCommand(), false, {
           runOnMouseDown: true,
         });
