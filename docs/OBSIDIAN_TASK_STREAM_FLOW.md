@@ -157,7 +157,7 @@ Use this short version:
 
 ## Related Files
 
-- [apps/obsidian-plugin/main.js](../apps/obsidian-plugin/main.js)
-- [apps/openagent-daemon/src/server.js](../apps/openagent-daemon/src/server.js)
+- [apps/obsidian-plugin/main.js](https://github.com/openagentmarket/openagent/blob/main/apps/obsidian-plugin/main.js)
+- [apps/openagent-daemon/src/server.js](https://github.com/openagentmarket/openagent/blob/main/apps/openagent-daemon/src/server.js)
 - [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
 - [docs/OBSIDIAN_PLUGIN_DEV.md](./OBSIDIAN_PLUGIN_DEV.md)

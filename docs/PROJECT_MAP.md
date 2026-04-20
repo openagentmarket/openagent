@@ -42,7 +42,7 @@ It is responsible for:
 - syncing running/completed node colors
 - writing assistant result nodes and edges back into `.canvas` files
 
-Important note: the current plugin implementation is still concentrated in one large file, [`apps/obsidian-plugin/main.js`](../apps/obsidian-plugin/main.js).
+Important note: the current plugin implementation is still concentrated in one large file, [`apps/obsidian-plugin/main.js`](https://github.com/openagentmarket/openagent/blob/main/apps/obsidian-plugin/main.js).
 
 ### `apps/openagent-daemon`
 
@@ -58,7 +58,7 @@ It is responsible for:
 - collecting runtime notifications into task messages
 - exposing task routes and server-sent event streams to the plugin
 
-Main entry point: [`apps/openagent-daemon/src/server.js`](../apps/openagent-daemon/src/server.js)
+Main entry point: [`apps/openagent-daemon/src/server.js`](https://github.com/openagentmarket/openagent/blob/main/apps/openagent-daemon/src/server.js)
 
 ### `packages/core`
 
@@ -72,7 +72,7 @@ It holds the common rules for:
 - normalizing `canvasBinding`
 - creating the canonical persisted task shape
 
-Main entry point: [`packages/core/src/index.js`](../packages/core/src/index.js)
+Main entry point: [`packages/core/src/index.js`](https://github.com/openagentmarket/openagent/blob/main/packages/core/src/index.js)
 
 ## How The Main Flow Works
 
@@ -112,12 +112,13 @@ These are the tracked folders that matter most:
 
 Important tracked single files:
 
-- [`README.md`](../README.md): product-level entry point
+- [`README.md`](https://github.com/openagentmarket/openagent/blob/main/README.md): product-level entry point
 - [`docs/USER_GUIDE.md`](./USER_GUIDE.md): user workflow inside Obsidian
 - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md): plugin/daemon/core architecture
+- [`docs/SAFE_SKILL_SANDBOX_MVP.md`](./SAFE_SKILL_SANDBOX_MVP.md): cloud-first product spec for safely testing third-party AI skills
 - [`docs/OBSIDIAN_PLUGIN_DEV.md`](./OBSIDIAN_PLUGIN_DEV.md): local plugin development workflow
 - [`docs/OBSIDIAN_PLUGIN_RELEASE.md`](./OBSIDIAN_PLUGIN_RELEASE.md): plugin packaging and GitHub release workflow
-- [`package.json`](../package.json): workspace scripts and top-level commands
+- [`package.json`](https://github.com/openagentmarket/openagent/blob/main/package.json): workspace scripts and top-level commands
 
 ## What Is Source Code vs. Local Working State
 
@@ -144,7 +145,7 @@ The top-level repo may also contain personal vault folders or working directorie
 
 ## Scripts And What They Are For
 
-Top-level scripts defined in [`package.json`](../package.json):
+Top-level scripts defined in [`package.json`](https://github.com/openagentmarket/openagent/blob/main/package.json):
 
 - `pnpm run check`
   Runs syntax plus hygiene checks.
@@ -169,7 +170,7 @@ Top-level scripts defined in [`package.json`](../package.json):
 - `pnpm run test:obsidian-ui-smoke`
   Exercises the command-palette/UI path.
 
-There is also a small CLI at [`scripts/openagent-cli.mjs`](../scripts/openagent-cli.mjs) that helps with setup and repo bootstrap.
+There is also a small CLI at [`scripts/openagent-cli.mjs`](https://github.com/openagentmarket/openagent/blob/main/scripts/openagent-cli.mjs) that helps with setup and repo bootstrap.
 
 ## Key Contracts Worth Knowing
 
@@ -232,14 +233,14 @@ There is also one small legacy-looking signal in the repo: the root `package.jso
 
 If you want to understand the repo quickly, use this order:
 
-1. [`README.md`](../README.md)
+1. [`README.md`](https://github.com/openagentmarket/openagent/blob/main/README.md)
 2. this document
 3. [`docs/USER_GUIDE.md`](./USER_GUIDE.md)
 4. [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md)
 5. [`docs/OBSIDIAN_PLUGIN_DEV.md`](./OBSIDIAN_PLUGIN_DEV.md)
-6. [`apps/obsidian-plugin/main.js`](../apps/obsidian-plugin/main.js)
-7. [`apps/openagent-daemon/src/server.js`](../apps/openagent-daemon/src/server.js)
-8. [`packages/core/src/index.js`](../packages/core/src/index.js)
+6. [`apps/obsidian-plugin/main.js`](https://github.com/openagentmarket/openagent/blob/main/apps/obsidian-plugin/main.js)
+7. [`apps/openagent-daemon/src/server.js`](https://github.com/openagentmarket/openagent/blob/main/apps/openagent-daemon/src/server.js)
+8. [`packages/core/src/index.js`](https://github.com/openagentmarket/openagent/blob/main/packages/core/src/index.js)
 
 ## If You Need To Change Something
 

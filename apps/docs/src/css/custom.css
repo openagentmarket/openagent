@@ -1,0 +1,153 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap');
+
+:root {
+  --ifm-color-primary: #111111;
+  --ifm-color-primary-dark: #0f0f0f;
+  --ifm-color-primary-darker: #0e0e0e;
+  --ifm-color-primary-darkest: #0b0b0b;
+  --ifm-color-primary-light: #222222;
+  --ifm-color-primary-lighter: #2a2a2a;
+  --ifm-color-primary-lightest: #3a3a3a;
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #ffffff;
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.92);
+  --ifm-footer-background-color: #fafafa;
+  --ifm-footer-color: #525252;
+  --ifm-footer-link-color: #171717;
+  --ifm-heading-color: #111111;
+  --ifm-font-color-base: #171717;
+  --ifm-color-emphasis-100: #f5f5f5;
+  --ifm-color-emphasis-200: #e5e5e5;
+  --ifm-color-emphasis-300: #d4d4d4;
+  --ifm-color-emphasis-400: #a3a3a3;
+  --ifm-color-emphasis-500: #737373;
+  --ifm-color-emphasis-600: #525252;
+  --ifm-color-emphasis-700: #404040;
+  --ifm-color-emphasis-800: #262626;
+  --ifm-link-color: #171717;
+  --ifm-code-font-size: 95%;
+  --ifm-global-radius: 12px;
+  --ifm-font-family-base: 'Geist', 'Helvetica Neue', Arial, sans-serif;
+  --ifm-font-family-monospace: 'Geist Mono', 'SFMono-Regular', monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #f5f5f5;
+  --ifm-color-primary-dark: #ebebeb;
+  --ifm-color-primary-darker: #dddddd;
+  --ifm-color-primary-darkest: #cfcfcf;
+  --ifm-color-primary-light: #f7f7f7;
+  --ifm-color-primary-lighter: #fafafa;
+  --ifm-color-primary-lightest: #ffffff;
+  --ifm-background-color: #0a0a0a;
+  --ifm-background-surface-color: #111111;
+  --ifm-navbar-background-color: rgba(10, 10, 10, 0.92);
+  --ifm-footer-background-color: #0a0a0a;
+  --ifm-footer-color: #a3a3a3;
+  --ifm-footer-link-color: #fafafa;
+  --ifm-heading-color: #fafafa;
+  --ifm-font-color-base: #ededed;
+  --ifm-color-emphasis-100: #171717;
+  --ifm-color-emphasis-200: #262626;
+  --ifm-color-emphasis-300: #404040;
+  --ifm-color-emphasis-400: #525252;
+  --ifm-color-emphasis-500: #737373;
+  --ifm-color-emphasis-600: #a3a3a3;
+  --ifm-color-emphasis-700: #d4d4d4;
+  --ifm-color-emphasis-800: #e5e5e5;
+  --ifm-link-color: #fafafa;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.06);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--ifm-background-color);
+  font-feature-settings: 'ss01' 1;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  backdrop-filter: blur(12px);
+  box-shadow: none;
+}
+
+.navbar__brand,
+.navbar__item,
+.menu__link,
+.table-of-contents__link {
+  font-size: 0.94rem;
+}
+
+.navbar__title,
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.03em;
+}
+
+.theme-doc-sidebar-container {
+  border-right: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.theme-doc-toc-desktop {
+  border-left: 1px solid var(--ifm-color-emphasis-200);
+  padding-left: 1rem;
+}
+
+.button {
+  border-radius: 999px;
+  font-weight: 500;
+  box-shadow: none;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.button--primary {
+  background: #111111;
+  border-color: #111111;
+  color: #ffffff;
+}
+
+.button--primary:hover {
+  background: #252525;
+  border-color: #252525;
+  color: #ffffff;
+}
+
+.button--secondary {
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  color: var(--ifm-font-color-base);
+}
+
+.button--secondary:hover {
+  background: var(--ifm-color-emphasis-100);
+  color: var(--ifm-font-color-base);
+}
+
+.pagination-nav__link,
+.card,
+.clean-btn,
+.menu {
+  box-shadow: none;
+}
+
+.markdown img {
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 12px;
+}
+
+.theme-doc-markdown header + p {
+  font-size: 1.02rem;
+}
+
+.footer {
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}

@@ -2,7 +2,7 @@
 
 This guide is for using OpenAgent from Obsidian once the repo is already set up.
 
-For installation and bootstrap, start with the root [README](../README.md).
+For installation and bootstrap, start with the root [README](https://github.com/openagentmarket/openagent/blob/main/README.md).
 
 If you want a quick reference for native Obsidian Canvas interactions and shortcuts, read [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md).
 

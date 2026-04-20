@@ -84,7 +84,7 @@ If you select only the text node and run `OpenAgent: New thread from selection`,
 
 ## Related Docs
 
-- [README.md](../README.md)
+- [README.md](https://github.com/openagentmarket/openagent/blob/main/README.md)
 - [docs/USER_GUIDE.md](./USER_GUIDE.md)
-- [OpenAgent Canvas UX Guide.md](../OpenAgent%20Canvas%20UX%20Guide.md)
+- [OpenAgent Canvas UX Guide.md](https://github.com/openagentmarket/openagent/blob/main/OpenAgent%20Canvas%20UX%20Guide.md)
 - [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md)
