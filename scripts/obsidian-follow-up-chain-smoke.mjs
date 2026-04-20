@@ -189,8 +189,8 @@ function appendFollowUpNode(resultNodeId) {
   nodes.push({
     id: followUpNodeId,
     type: "text",
-    x: Number(resultNode.x || 0) + Number(resultNode.width || 420) + 160,
-    y: Number(resultNode.y || 0),
+    x: Number(resultNode.x || 0),
+    y: Number(resultNode.y || 0) + Number(resultNode.height || 180) + 40,
     width: 420,
     height: 180,
     text: "Reply with FOLLOW_UP_CHAIN_OK only.",
@@ -199,8 +199,8 @@ function appendFollowUpNode(resultNodeId) {
     id: `${requestBaseId}-follow-up-edge`,
     fromNode: resultNodeId,
     toNode: followUpNodeId,
-    fromSide: "right",
-    toSide: "left",
+    fromSide: "bottom",
+    toSide: "top",
   });
 
   writeCanvas({

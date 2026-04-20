@@ -4831,8 +4831,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
         id: createCanvasObjectId("oa-follow-up-edge"),
         fromNode: anchor.anchorNodeId,
         toNode: followUpNodeId,
-        fromSide: "right",
-        toSide: "left",
+        fromSide: "bottom",
+        toSide: "top",
       };
 
       const nextParsed = {
@@ -4908,7 +4908,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       RESULT_NODE_MIN_WIDTH,
       RESULT_NODE_MAX_WIDTH
     );
-    const x = toFiniteNumber(anchorNode?.x, 0) + toFiniteNumber(anchorNode?.width, width) + CANVAS_LAYOUT_X_GAP;
+    const x = toFiniteNumber(anchorNode?.x, 0);
     const childNodes = (Array.isArray(edges) ? edges : [])
       .filter((edge) => String(edge?.fromNode || "").trim() === String(anchorNode?.id || "").trim())
       .map((edge) => nodeById?.get(String(edge?.toNode || "").trim()) || null)
@@ -4918,8 +4918,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
       ? childNodes.reduce((maxY, node) => {
           const nextBottom = toFiniteNumber(node?.y, 0) + toFiniteNumber(node?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT);
           return Math.max(maxY, nextBottom + RESULT_NODE_Y_GAP);
-        }, toFiniteNumber(anchorNode?.y, 0))
-      : toFiniteNumber(anchorNode?.y, 0);
+        }, toFiniteNumber(anchorNode?.y, 0) + toFiniteNumber(anchorNode?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT) + RESULT_NODE_Y_GAP)
+      : toFiniteNumber(anchorNode?.y, 0) + toFiniteNumber(anchorNode?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT) + RESULT_NODE_Y_GAP;
 
     return {
       id: followUpNodeId,
