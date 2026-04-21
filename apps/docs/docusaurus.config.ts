@@ -4,8 +4,8 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'OpenAgent Docs',
-  tagline: 'Local-first Codex orchestration through Obsidian Canvas.',
-  favicon: 'img/favicon.ico',
+  tagline: 'From thought to action.',
+  favicon: 'img/openagent-panel-logo.png',
   future: {
     v4: true,
   },
@@ -52,10 +52,10 @@ const config: Config = {
     navbar: {
       logo: {
         alt: 'OpenAgent',
-        src: 'openagent-wordmark.png',
-        srcDark: 'openagent-wordmark.png',
-        width: 156,
-        height: 52,
+        src: 'img/openagent-panel-logo.png',
+        srcDark: 'img/openagent-panel-logo.png',
+        width: 32,
+        height: 32,
       },
       items: [
         {

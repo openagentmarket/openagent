@@ -5,46 +5,82 @@ sidebar_position: 1
 
 # OpenAgent Docs
 
-OpenAgent documentation now follows one simple structure:
+These docs are now organized around a simpler question:
 
-- `getting-started` for setup and day-one usage
-- `concepts` for the product model and shared mental models
-- `engineering` for implementation and release workflows
-- `notes` for research and product thinking that supports ongoing work
-- `diagrams` for canvas-based maps and system visuals
+**Why are you here?**
 
-## Start Here
+The old structure was accurate, but too general. New readers had to decide between `getting-started`, `concepts`, and `engineering` before they even knew which path matched their job.
 
-If you are new to the project, use this order:
+This home page is now the router.
 
-1. [User Guide](./getting-started/user-guide.md)
-2. [Project Map](./concepts/project-map.md)
-3. [Architecture](./engineering/architecture.md)
+## Choose Your Path
 
-## Sections
+### I am evaluating OpenAgent
 
-### Getting Started
+Use this if you are trying to understand the product, fit, and constraints before installing it.
 
-- [User Guide](./getting-started/user-guide.md)
+Read:
+
+- [Evaluate OpenAgent](./evaluate-openagent.md)
+- [README](https://github.com/openagentmarket/openagent/blob/main/README.md)
+
+### I want to install OpenAgent
+
+Use this if you already know you want it running and need the fastest install path.
+
+Read:
+
+- [Install OpenAgent](./install-openagent.md)
 - [Manual Install](./getting-started/manual-install.md)
-- [Mobile Guide](./getting-started/mobile-guide.md)
 
-### Concepts
+### I want to use OpenAgent in Obsidian
 
+Use this if you are the primary product user and care about canvases, selections, result nodes, and follow-ups.
+
+Read:
+
+- [Use OpenAgent in Obsidian](./use-openagent-in-obsidian.md)
+- [OpenAgent User Guide](./getting-started/user-guide.md)
+
+### I want the mobile Convos flow
+
+Use this if your chat surface is your phone but Codex still runs locally on your Mac.
+
+Read:
+
+- [OpenAgent Mobile Guide](./getting-started/mobile-guide.md)
+
+### I want to contribute or debug the repo
+
+Use this if you are changing code, debugging architecture, or shipping releases.
+
+Read:
+
+- [Contribute to OpenAgent](./contribute-to-openagent.md)
 - [Project Map](./concepts/project-map.md)
-- [Obsidian Canvas Reference](./concepts/obsidian-canvas.md)
-- [Group Context](./concepts/group-context.md)
-
-### Engineering
-
 - [Architecture](./engineering/architecture.md)
-- [Plugin Development](./engineering/plugin-development.md)
-- [Plugin Release](./engineering/plugin-release.md)
-- [Task Stream Flow](./engineering/task-stream-flow.md)
 
-### Notes
+## The Main User Groups
 
-- [Safe Skill Sandbox MVP](./notes/safe-skill-sandbox-mvp.md)
-- [Canvas Image Support Research](./notes/canvas-image-support.md)
+OpenAgent currently serves four main user groups plus one specialized path:
 
-The root [README](https://github.com/openagentmarket/openagent/blob/main/README.md) remains the fastest product-level overview.
+1. Evaluators who need product clarity and fit.
+2. Obsidian users who need the core workflow.
+3. Installers who need setup and verification.
+4. Contributors who need architecture and development flow.
+5. Mobile users who need the Convos-specific path.
+
+## Reference Sections
+
+Once you are in the right path, these deeper sections still matter:
+
+- `getting-started`
+  operational guides for install and day-one use
+- `concepts`
+  mental models such as canvas structure and group context
+- `engineering`
+  implementation, architecture, development, and release workflows
+- `notes`
+  research and product thinking that support active work
+
+If you are unsure where to begin, start with [Evaluate OpenAgent](./evaluate-openagent.md).

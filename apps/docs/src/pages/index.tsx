@@ -7,41 +7,94 @@ import Heading from '@theme/Heading';
 
 import styles from './index.module.css';
 
-const sections = [
+function DocLink({
+  href,
+  label,
+  className,
+  children,
+}: {
+  href: string;
+  label?: string;
+  className?: string;
+  children?: ReactNode;
+}): ReactNode {
+  const content = children ?? label;
+
+  if (href.startsWith('http')) {
+    return (
+      <Link className={className} href={href}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <Link className={className} to={href}>
+      {content}
+    </Link>
+  );
+}
+
+const paths = [
   {
-    title: 'Get started',
-    description: 'The fastest path to using OpenAgent inside an Obsidian vault.',
+    title: 'Evaluate OpenAgent',
+    description: 'Understand product fit, constraints, and who OpenAgent is actually for.',
     links: [
-      {label: 'User guide', href: '/docs/getting-started/user-guide'},
+      {label: 'Start here', href: '/docs/evaluate-openagent'},
+      {label: 'README overview', href: 'https://github.com/openagentmarket/openagent'},
+    ],
+  },
+  {
+    title: 'Install OpenAgent',
+    description: 'Choose between the recommended bootstrap flow and the manual plugin install path.',
+    links: [
+      {label: 'Install guide', href: '/docs/install-openagent'},
       {label: 'Manual install', href: '/docs/getting-started/manual-install'},
-      {label: 'Convos mobile guide', href: '/docs/getting-started/mobile-guide'},
     ],
   },
   {
-    title: 'Build and debug',
-    description: 'Understand the runtime, plugin workflow, and release process.',
+    title: 'Use In Obsidian',
+    description: 'Follow the main workflow for workspaces, selections, result nodes, and follow-ups.',
     links: [
-      {label: 'Architecture', href: '/docs/engineering/architecture'},
-      {label: 'Plugin development', href: '/docs/engineering/plugin-development'},
-      {label: 'Plugin release', href: '/docs/engineering/plugin-release'},
-    ],
-  },
-  {
-    title: 'Concepts',
-    description: 'Use the repo map and product notes when you need more detail.',
-    links: [
-      {label: 'Project map', href: '/docs/concepts/project-map'},
-      {label: 'Canvas reference', href: '/docs/concepts/obsidian-canvas'},
+      {label: 'Obsidian path', href: '/docs/use-openagent-in-obsidian'},
+      {label: 'User guide', href: '/docs/getting-started/user-guide'},
       {label: 'Group context', href: '/docs/concepts/group-context'},
     ],
   },
   {
-    title: 'Notes',
-    description: 'Product specs and implementation notes that support ongoing work.',
+    title: 'Use From Mobile',
+    description: 'Run the Convos flow when your phone is the chat surface but your Mac stays the runtime.',
     links: [
+      {label: 'Mobile guide', href: '/docs/getting-started/mobile-guide'},
+    ],
+  },
+  {
+    title: 'Contribute',
+    description: 'Get repo context, architecture, plugin workflow, and release docs for contributor work.',
+    links: [
+      {label: 'Contributor path', href: '/docs/contribute-to-openagent'},
+      {label: 'Project map', href: '/docs/concepts/project-map'},
+      {label: 'Architecture', href: '/docs/engineering/architecture'},
+    ],
+  },
+];
+
+const references = [
+  {
+    title: 'Core References',
+    description: 'Deeper docs for mental models, architecture, and implementation details.',
+    links: [
+      {label: 'Canvas reference', href: '/docs/concepts/obsidian-canvas'},
+      {label: 'Project map', href: '/docs/concepts/project-map'},
       {label: 'Task stream flow', href: '/docs/engineering/task-stream-flow'},
+    ],
+  },
+  {
+    title: 'Working Notes',
+    description: 'Research and design notes that support ongoing product and engineering work.',
+    links: [
       {label: 'Safe skill sandbox MVP', href: '/docs/notes/safe-skill-sandbox-mvp'},
-      {label: 'Canvas image support research', href: '/docs/notes/canvas-image-support'},
+      {label: 'Canvas image support', href: '/docs/notes/canvas-image-support'},
     ],
   },
 ];
@@ -73,17 +126,17 @@ export default function Home(): ReactNode {
                 </Heading>
                 <p className={styles.subtitle}>{siteConfig.tagline}</p>
                 <p className={styles.summary}>
-                  OpenAgent turns an Obsidian Canvas selection into a durable
-                  Codex task and writes the result back into the graph. This
-                  site pulls directly from the repo&apos;s markdown docs.
+                  Pick the path that matches why you are here: evaluate the product,
+                  install it, use it in Obsidian, run the mobile flow, or contribute
+                  to the repo.
                 </p>
                 <div className={styles.actions}>
-                  <Link className="button button--primary" to="/docs/">
-                    Get started
-                  </Link>
-                  <Link className={styles.textAction} to="/docs/concepts/project-map">
-                    Explore the project map
-                  </Link>
+                  <DocLink className="button button--primary" href="/docs/evaluate-openagent">
+                    Choose a path
+                  </DocLink>
+                  <DocLink className={styles.textAction} href="/docs/use-openagent-in-obsidian">
+                    See the main Obsidian flow
+                  </DocLink>
                 </div>
               </div>
               <div className={styles.preview}>
@@ -101,23 +154,51 @@ export default function Home(): ReactNode {
         <section className={styles.section}>
           <div className="container">
             <div className={styles.sectionHeader}>
-              <Heading as="h2">Browse the docs</Heading>
+              <Heading as="h2">Choose Your Path</Heading>
               <p>
-                A simple index for the guides, architecture notes, and working
-                documents already tracked in this repository.
+                OpenAgent has a few distinct audiences. Start with the path that
+                matches your job instead of guessing between concepts and engineering.
               </p>
             </div>
             <div className={styles.sectionGrid}>
-              {sections.map((section) => (
+              {paths.map((section) => (
                 <article className={styles.card} key={section.title}>
                   <Heading as="h3">{section.title}</Heading>
                   <p className={styles.cardDescription}>{section.description}</p>
                   <div className={styles.linkList}>
                     {section.links.map((link) => (
-                      <Link className={styles.linkRow} key={link.href} to={link.href}>
+                      <DocLink className={styles.linkRow} key={link.href} href={link.href}>
                         <span>{link.label}</span>
                         <span className={styles.arrow}>↗</span>
-                      </Link>
+                      </DocLink>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.section}>
+          <div className="container">
+            <div className={styles.sectionHeader}>
+              <Heading as="h2">Reference</Heading>
+              <p>
+                Once you are on the right path, these deeper docs explain the
+                product model, implementation details, and active research.
+              </p>
+            </div>
+            <div className={styles.sectionGrid}>
+              {references.map((section) => (
+                <article className={styles.card} key={section.title}>
+                  <Heading as="h3">{section.title}</Heading>
+                  <p className={styles.cardDescription}>{section.description}</p>
+                  <div className={styles.linkList}>
+                    {section.links.map((link) => (
+                      <DocLink className={styles.linkRow} key={link.href} href={link.href}>
+                        <span>{link.label}</span>
+                        <span className={styles.arrow}>↗</span>
+                      </DocLink>
                     ))}
                   </div>
                 </article>

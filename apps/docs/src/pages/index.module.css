@@ -48,11 +48,13 @@
 }
 
 .subtitle {
-  max-width: 34rem;
-  margin: 0 0 1rem;
-  color: var(--ifm-color-emphasis-700);
-  font-size: 1.06rem;
-  line-height: 1.6;
+  max-width: 18ch;
+  margin: 0 0 1.25rem;
+  color: var(--ifm-heading-color);
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  line-height: 0.94;
 }
 
 .summary {
@@ -190,6 +192,11 @@
 }
 
 @media screen and (max-width: 640px) {
+  .subtitle {
+    max-width: 100%;
+    font-size: clamp(1.8rem, 11vw, 2.8rem);
+  }
+
   .actions {
     align-items: flex-start;
     flex-direction: column;
