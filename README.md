@@ -14,6 +14,12 @@ Pick nodes on a canvas, turn them into a task, keep nearby context visible, and 
 
 https://github.com/user-attachments/assets/ac415304-7bc1-4022-b9a4-c6b919734a47
 
+## Documentation
+
+Docs website:
+
+- https://openagent-market-docs.web.app
+
 ## How It Works
 
 1. Select one or more nodes on a Canvas.
@@ -34,7 +40,7 @@ That means you can:
 
 The key idea is simple: Convos is the remote chat surface, but the work still happens on your own machine through the local OpenAgent daemon.
 
-Read the mobile flow in [docs/getting-started/mobile-guide.md](docs/getting-started/mobile-guide.md).
+Read the mobile flow in the [OpenAgent Mobile Guide](https://openagent-market-docs.web.app/docs/getting-started/mobile-guide).
 
 ## Quick Start
 
@@ -88,7 +94,7 @@ If you prefer the manual path, you can still download:
 - `styles.css`
 
 and copy them into `.obsidian/plugins/openagent`.
-Full steps live in [docs/getting-started/manual-install.md](docs/getting-started/manual-install.md).
+Full steps live in the [Manual Install guide](https://openagent-market-docs.web.app/docs/getting-started/manual-install).
 
 ## License
 
