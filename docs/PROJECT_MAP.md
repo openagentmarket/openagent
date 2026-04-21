@@ -89,6 +89,8 @@ The normal product flow is:
 
 For follow-ups, the plugin can treat a new text node connected to an older result node as a continuation of the same task/thread, while moving the active canvas source node forward.
 
+The repo binding comes from the workspace folder, not from a `.canvas` file alone. In practice, any canvas under the same workspace folder resolves to the same repo because the plugin maps the canvas path back to that workspace's `workspace.json`.
+
 ## Repository Map
 
 These are the tracked folders that matter most:

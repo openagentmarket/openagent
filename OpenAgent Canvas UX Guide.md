@@ -31,6 +31,16 @@ Each workspace has:
 
 The workspace decides which repo Codex should use.
 
+The important detail is that the repo binding lives in `workspace.json`, not in the `.canvas` file itself.
+
+Any canvas inside that workspace folder inherits the same repo. A new canvas does not need its own repo setting as long as it stays inside the workspace folder.
+
+For example:
+
+- `Workspaces/my-app/Main.canvas` -> linked to the repo in `Workspaces/my-app/workspace.json`
+- `Workspaces/my-app/bugs.canvas` -> linked to the same repo
+- `Notes/ideas.canvas` -> not linked through that workspace
+
 ### 2. Source node
 
 A source node is the canvas node a user is actively running from.
@@ -76,6 +86,8 @@ Users can run `OpenAgent: Choose workspace` to:
 When a workspace is created, OpenAgent creates a default `Main.canvas` if needed.
 
 This is the normal starting point for a project.
+
+After that, users can create more canvases inside the same workspace folder if they want separate boards for planning, bugs, or specs. Those canvases still belong to the same repo workspace.
 
 ### 2. Select nodes and start a new thread
 

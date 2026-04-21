@@ -32,6 +32,16 @@ Each workspace contains:
 - a `workspace.json` file with the repo path and default canvas
 - a `Main.canvas` file that acts as the visual home for that repo
 
+`workspace.json` is the source of truth for the repo link.
+
+OpenAgent does not treat a `.canvas` file by itself as the thing that knows which repo to use. Instead, it checks which workspace folder that canvas lives in, then reads that workspace's `repoPath`.
+
+That means:
+
+- `Workspaces/my-app/Main.canvas` uses the repo from `Workspaces/my-app/workspace.json`
+- `Workspaces/my-app/bugs.canvas` also uses that same repo because it is inside the same workspace folder
+- a canvas outside the workspace folder is not reliably linked to that repo
+
 ### Canvas Selection
 
 OpenAgent reads the currently selected Canvas nodes and turns them into prompt context.
@@ -99,6 +109,14 @@ OpenAgent currently exposes these settings in Obsidian:
 Run `OpenAgent: Choose workspace` and point it at the repo you want Codex to use.
 
 OpenAgent will create a workspace folder in your vault and a default `Main.canvas` if one does not exist yet.
+
+If you later create additional canvases for that same repo, keep them inside the same workspace folder. For example:
+
+- `Workspaces/my-app/Main.canvas`
+- `Workspaces/my-app/bugs.canvas`
+- `Workspaces/my-app/planning.canvas`
+
+All of those canvases will resolve to the same repo because they share the same `workspace.json`.
 
 ### 2. Select Context on Canvas
 
