@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # Safe Skill Sandbox MVP
 
 This doc defines a narrow product wedge for safely trying third-party AI skills in the cloud before trusting them on a real machine or repo.

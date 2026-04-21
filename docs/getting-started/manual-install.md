@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # Manual Install
 
 Use this if you want to install the Obsidian plugin by hand.
@@ -24,3 +28,6 @@ If you prefer to install the plugin files yourself:
 4. Enable `OpenAgent` in `Settings -> Community plugins`.
 
 `data.json` is not required up front. OpenAgent creates and manages it in the vault.
+---
+sidebar_position: 2
+---

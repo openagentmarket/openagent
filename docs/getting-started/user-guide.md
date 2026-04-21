@@ -1,12 +1,16 @@
+---
+sidebar_position: 1
+---
+
 # OpenAgent User Guide
 
 This guide is for using OpenAgent from Obsidian once the repo is already set up.
 
 For installation and bootstrap, start with the root [README](https://github.com/openagentmarket/openagent/blob/main/README.md).
 
-If you want a quick reference for native Obsidian Canvas interactions and shortcuts, read [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md).
+If you want a quick reference for native Obsidian Canvas interactions and shortcuts, read [Obsidian Canvas Reference](../concepts/obsidian-canvas.md).
 
-If you want to use OpenAgent from your phone through Convos while still running Codex locally on your Mac, read [docs/CONVOS_MOBILE_GUIDE.md](./CONVOS_MOBILE_GUIDE.md).
+If you want to use OpenAgent from your phone through Convos while still running Codex locally on your Mac, read [Mobile Guide](./mobile-guide.md).
 
 ## What OpenAgent Does
 
@@ -53,7 +57,7 @@ Today the main context types are:
 - image file nodes
 - node links and local Canvas structure used to recover follow-up context
 
-If you are new to Canvas itself, the fastest supporting reference is [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md).
+If you are new to Canvas itself, the fastest supporting reference is [Obsidian Canvas Reference](../concepts/obsidian-canvas.md).
 
 ### Task
 
@@ -157,7 +161,7 @@ Image behavior works a little differently from markdown:
 - if you select one text node and it has connected or grouped image file nodes, the text stays the raw prompt and the images are attached separately
 - if you want to be certain an image is present on a later turn, either reselect the image node or use a connected follow-up pattern that preserves that image context
 
-For the exact rule and overlap behavior, see [docs/GROUP_CONTEXT.md](./GROUP_CONTEXT.md).
+For the exact rule and overlap behavior, see [Group Context](../concepts/group-context.md).
 
 ### 4. Review the Result
 
@@ -210,7 +214,7 @@ OpenAgent will try to reuse the same daemon task and Codex thread while changing
 
 ### Canvas changes do not show up in Obsidian while developing
 
-- Read [docs/OBSIDIAN_PLUGIN_DEV.md](./OBSIDIAN_PLUGIN_DEV.md).
+- Read [Plugin Development](../engineering/plugin-development.md).
 - Confirm the vault plugin files are symlinked back to `apps/obsidian-plugin`.
 - Re-run `pnpm run link:obsidian-plugin` if needed.
 

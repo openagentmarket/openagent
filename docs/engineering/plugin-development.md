@@ -1,12 +1,16 @@
+---
+sidebar_position: 2
+---
+
 # Obsidian Plugin Dev
 
 This is the working playbook for developing and testing the Obsidian plugin in this repo.
 
 Read these first when you need broader context:
 
-- [docs/USER_GUIDE.md](./USER_GUIDE.md) for the user-facing workflow
-- [docs/ARCHITECTURE.md](./ARCHITECTURE.md) for the plugin, daemon, and task model
-- [docs/OBSIDIAN_PLUGIN_RELEASE.md](./OBSIDIAN_PLUGIN_RELEASE.md) for versioning and GitHub release steps
+- [User Guide](../getting-started/user-guide.md) for the user-facing workflow
+- [Architecture](./architecture.md) for the plugin, daemon, and task model
+- [Plugin Release](./plugin-release.md) for versioning and GitHub release steps
 
 ## Source of truth
 
@@ -268,3 +272,6 @@ When building a new plugin feature, use this checklist:
 5. reload Obsidian and verify the same behavior manually if the UI matters
 
 If a new feature introduces a state transition that can regress silently, prefer adding a dedicated smoke script for it.
+---
+sidebar_position: 2
+---

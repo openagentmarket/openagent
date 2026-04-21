@@ -12,36 +12,36 @@ const sections = [
     title: 'Get started',
     description: 'The fastest path to using OpenAgent inside an Obsidian vault.',
     links: [
-      {label: 'User guide', href: '/docs/USER_GUIDE'},
-      {label: 'Manual install', href: '/docs/MANUAL_INSTALL'},
-      {label: 'Convos mobile guide', href: '/docs/CONVOS_MOBILE_GUIDE'},
+      {label: 'User guide', href: '/docs/getting-started/user-guide'},
+      {label: 'Manual install', href: '/docs/getting-started/manual-install'},
+      {label: 'Convos mobile guide', href: '/docs/getting-started/mobile-guide'},
     ],
   },
   {
     title: 'Build and debug',
     description: 'Understand the runtime, plugin workflow, and release process.',
     links: [
-      {label: 'Architecture', href: '/docs/ARCHITECTURE'},
-      {label: 'Plugin development', href: '/docs/OBSIDIAN_PLUGIN_DEV'},
-      {label: 'Plugin release', href: '/docs/OBSIDIAN_PLUGIN_RELEASE'},
+      {label: 'Architecture', href: '/docs/engineering/architecture'},
+      {label: 'Plugin development', href: '/docs/engineering/plugin-development'},
+      {label: 'Plugin release', href: '/docs/engineering/plugin-release'},
     ],
   },
   {
-    title: 'Reference',
+    title: 'Concepts',
     description: 'Use the repo map and product notes when you need more detail.',
     links: [
-      {label: 'Project map', href: '/docs/PROJECT_MAP'},
-      {label: 'Canvas reference', href: '/docs/OBSIDIAN_CANVAS_REFERENCE'},
-      {label: 'Group context', href: '/docs/GROUP_CONTEXT'},
+      {label: 'Project map', href: '/docs/concepts/project-map'},
+      {label: 'Canvas reference', href: '/docs/concepts/obsidian-canvas'},
+      {label: 'Group context', href: '/docs/concepts/group-context'},
     ],
   },
   {
-    title: 'Working notes',
+    title: 'Notes',
     description: 'Product specs and implementation notes that support ongoing work.',
     links: [
-      {label: 'Task stream flow', href: '/docs/OBSIDIAN_TASK_STREAM_FLOW'},
-      {label: 'Safe skill sandbox MVP', href: '/docs/SAFE_SKILL_SANDBOX_MVP'},
-      {label: 'Canvas image support research', href: '/docs/CANVAS_IMAGE_SUPPORT_RESEARCH'},
+      {label: 'Task stream flow', href: '/docs/engineering/task-stream-flow'},
+      {label: 'Safe skill sandbox MVP', href: '/docs/notes/safe-skill-sandbox-mvp'},
+      {label: 'Canvas image support research', href: '/docs/notes/canvas-image-support'},
     ],
   },
 ];
@@ -78,10 +78,10 @@ export default function Home(): ReactNode {
                   site pulls directly from the repo&apos;s markdown docs.
                 </p>
                 <div className={styles.actions}>
-                  <Link className="button button--primary" to="/docs/USER_GUIDE">
+                  <Link className="button button--primary" to="/docs/">
                     Get started
                   </Link>
-                  <Link className={styles.textAction} to="/docs/PROJECT_MAP">
+                  <Link className={styles.textAction} to="/docs/concepts/project-map">
                     Explore the project map
                   </Link>
                 </div>

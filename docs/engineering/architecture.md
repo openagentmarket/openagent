@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # OpenAgent Architecture
 
 This doc explains how the Obsidian plugin, the local daemon, and the shared task model fit together.

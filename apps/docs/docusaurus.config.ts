@@ -65,12 +65,12 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/docs/USER_GUIDE',
+          to: '/docs/getting-started/user-guide',
           label: 'User Guide',
           position: 'left',
         },
         {
-          to: '/docs/ARCHITECTURE',
+          to: '/docs/engineering/architecture',
           label: 'Architecture',
           position: 'left',
         },
@@ -89,11 +89,11 @@ const config: Config = {
           items: [
             {
               label: 'User Guide',
-              to: '/docs/USER_GUIDE',
+              to: '/docs/getting-started/user-guide',
             },
             {
               label: 'Project Map',
-              to: '/docs/PROJECT_MAP',
+              to: '/docs/concepts/project-map',
             },
           ],
         },
@@ -102,15 +102,15 @@ const config: Config = {
           items: [
             {
               label: 'Architecture',
-              to: '/docs/ARCHITECTURE',
+              to: '/docs/engineering/architecture',
             },
             {
               label: 'Plugin Development',
-              to: '/docs/OBSIDIAN_PLUGIN_DEV',
+              to: '/docs/engineering/plugin-development',
             },
             {
               label: 'Mobile Guide',
-              to: '/docs/CONVOS_MOBILE_GUIDE',
+              to: '/docs/getting-started/mobile-guide',
             },
           ],
         },
@@ -123,7 +123,7 @@ const config: Config = {
             },
             {
               label: 'Manual Install',
-              to: '/docs/MANUAL_INSTALL',
+              to: '/docs/getting-started/manual-install',
             },
           ],
         },

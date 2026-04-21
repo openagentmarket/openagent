@@ -34,7 +34,7 @@ That means you can:
 
 The key idea is simple: Convos is the remote chat surface, but the work still happens on your own machine through the local OpenAgent daemon.
 
-Read the mobile flow in [docs/CONVOS_MOBILE_GUIDE.md](docs/CONVOS_MOBILE_GUIDE.md).
+Read the mobile flow in [docs/getting-started/mobile-guide.md](docs/getting-started/mobile-guide.md).
 
 ## Quick Start
 
@@ -88,7 +88,7 @@ If you prefer the manual path, you can still download:
 - `styles.css`
 
 and copy them into `.obsidian/plugins/openagent`.
-Full steps live in [docs/MANUAL_INSTALL.md](docs/MANUAL_INSTALL.md).
+Full steps live in [docs/getting-started/manual-install.md](docs/getting-started/manual-install.md).
 
 ## License
 

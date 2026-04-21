@@ -1,3 +1,7 @@
+---
+sidebar_position: 3
+---
+
 # Obsidian Plugin Release
 
 This is the release checklist for the packaged Obsidian plugin that ships through GitHub Releases.
@@ -80,3 +84,6 @@ Typical fix:
 2. Delete the bad remote tag: `git push origin :refs/tags/vX.Y.Z`
 3. Recreate the tag on the correct commit.
 4. Push the tag again.
+---
+sidebar_position: 3
+---

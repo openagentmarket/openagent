@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # OpenAgent Project Map
 
 This is the fastest way to understand what this repository is, which folders matter, and how the pieces fit together in day-to-day work.
@@ -115,11 +119,11 @@ These are the tracked folders that matter most:
 Important tracked single files:
 
 - [`README.md`](https://github.com/openagentmarket/openagent/blob/main/README.md): product-level entry point
-- [`docs/USER_GUIDE.md`](./USER_GUIDE.md): user workflow inside Obsidian
-- [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md): plugin/daemon/core architecture
-- [`docs/SAFE_SKILL_SANDBOX_MVP.md`](./SAFE_SKILL_SANDBOX_MVP.md): cloud-first product spec for safely testing third-party AI skills
-- [`docs/OBSIDIAN_PLUGIN_DEV.md`](./OBSIDIAN_PLUGIN_DEV.md): local plugin development workflow
-- [`docs/OBSIDIAN_PLUGIN_RELEASE.md`](./OBSIDIAN_PLUGIN_RELEASE.md): plugin packaging and GitHub release workflow
+- [`docs/getting-started/user-guide.md`](../getting-started/user-guide.md): user workflow inside Obsidian
+- [`docs/engineering/architecture.md`](../engineering/architecture.md): plugin/daemon/core architecture
+- [`docs/notes/safe-skill-sandbox-mvp.md`](../notes/safe-skill-sandbox-mvp.md): cloud-first product spec for safely testing third-party AI skills
+- [`docs/engineering/plugin-development.md`](../engineering/plugin-development.md): local plugin development workflow
+- [`docs/engineering/plugin-release.md`](../engineering/plugin-release.md): plugin packaging and GitHub release workflow
 - [`package.json`](https://github.com/openagentmarket/openagent/blob/main/package.json): workspace scripts and top-level commands
 
 ## What Is Source Code vs. Local Working State
@@ -237,9 +241,9 @@ If you want to understand the repo quickly, use this order:
 
 1. [`README.md`](https://github.com/openagentmarket/openagent/blob/main/README.md)
 2. this document
-3. [`docs/USER_GUIDE.md`](./USER_GUIDE.md)
-4. [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md)
-5. [`docs/OBSIDIAN_PLUGIN_DEV.md`](./OBSIDIAN_PLUGIN_DEV.md)
+3. [`docs/getting-started/user-guide.md`](../getting-started/user-guide.md)
+4. [`docs/engineering/architecture.md`](../engineering/architecture.md)
+5. [`docs/engineering/plugin-development.md`](../engineering/plugin-development.md)
 6. [`apps/obsidian-plugin/main.js`](https://github.com/openagentmarket/openagent/blob/main/apps/obsidian-plugin/main.js)
 7. [`apps/openagent-daemon/src/server.js`](https://github.com/openagentmarket/openagent/blob/main/apps/openagent-daemon/src/server.js)
 8. [`packages/core/src/index.js`](https://github.com/openagentmarket/openagent/blob/main/packages/core/src/index.js)

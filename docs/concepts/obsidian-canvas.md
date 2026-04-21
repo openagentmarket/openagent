@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # Obsidian Canvas Reference
 
 This is a quick English reference for the parts of Obsidian Canvas that matter most when working with OpenAgent.
@@ -119,3 +123,6 @@ OpenAgent also treats some groups as `group context` during new-thread creation:
 
 - [Obsidian Canvas help](https://obsidian.md/help/plugins/canvas)
 - [Obsidian Hotkeys help](https://obsidian.md/help/hotkeys)
+---
+sidebar_position: 2
+---

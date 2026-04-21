@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # Canvas Image Support Research
 
 This note started as research on how OpenAgent could support Obsidian Canvas images with Codex. It now also records the first implemented pass so future work can distinguish shipped behavior from still-open follow-ups.
@@ -39,7 +43,7 @@ That means Canvas media cards can exist in Obsidian, but they are not part of th
 
 The repo already documents that Obsidian Canvas supports more than text and notes, including media cards:
 
-- [docs/OBSIDIAN_CANVAS_REFERENCE.md](/Users/applefather/Documents/GitHub/openagent/docs/OBSIDIAN_CANVAS_REFERENCE.md:9)
+- [Obsidian Canvas Reference](../concepts/obsidian-canvas.md)
 
 Relevant line:
 
@@ -58,8 +62,8 @@ In the Obsidian plugin, `resolveCanvasSelection()` loops through selected nodes 
 
 Everything else is skipped with a warning:
 
-- [apps/obsidian-plugin/main.js](/Users/applefather/Documents/GitHub/openagent/apps/obsidian-plugin/main.js:1517)
-- [apps/obsidian-plugin/main.js](/Users/applefather/Documents/GitHub/openagent/apps/obsidian-plugin/main.js:1541)
+- code reference: `apps/obsidian-plugin/main.js:1517`
+- code reference: `apps/obsidian-plugin/main.js:1541`
 
 This is the decisive current blocker.
 
@@ -67,7 +71,7 @@ This is the decisive current blocker.
 
 `buildCanvasMarkdownFileSelectionEntry()` explicitly rejects non-`.md` file nodes:
 
-- [apps/obsidian-plugin/main.js](/Users/applefather/Documents/GitHub/openagent/apps/obsidian-plugin/main.js:1583)
+- code reference: `apps/obsidian-plugin/main.js:1583`
 
 So an image file on Canvas currently becomes a warning, not usable context.
 
@@ -82,8 +86,8 @@ Both the plugin preview prompt builder and the shared core prompt builder only s
 
 References:
 
-- [apps/obsidian-plugin/main.js](/Users/applefather/Documents/GitHub/openagent/apps/obsidian-plugin/main.js:258)
-- [packages/core/src/index.js](/Users/applefather/Documents/GitHub/openagent/packages/core/src/index.js:305)
+- code reference: `apps/obsidian-plugin/main.js:258`
+- code reference: `packages/core/src/index.js:305`
 
 There is no image payload in the selection contract today.
 
@@ -95,7 +99,7 @@ When OpenAgent starts a turn, it sends:
 
 Reference:
 
-- [apps/openagent-daemon/src/server.js](/Users/applefather/Documents/GitHub/openagent/apps/openagent-daemon/src/server.js:402)
+- code reference: `apps/openagent-daemon/src/server.js:402`
 
 So even if the plugin started discovering image files, the runtime transport still would not pass them through.
 
@@ -235,13 +239,13 @@ That gives OpenAgent a safe incremental path:
 ## Main code areas to change
 
 - Selection resolver:
-  [apps/obsidian-plugin/main.js](/Users/applefather/Documents/GitHub/openagent/apps/obsidian-plugin/main.js:1483)
+  `apps/obsidian-plugin/main.js:1483`
 - Prompt preview builder:
-  [apps/obsidian-plugin/main.js](/Users/applefather/Documents/GitHub/openagent/apps/obsidian-plugin/main.js:258)
+  `apps/obsidian-plugin/main.js:258`
 - Shared selection normalization and prompt contract:
-  [packages/core/src/index.js](/Users/applefather/Documents/GitHub/openagent/packages/core/src/index.js:31)
+  `packages/core/src/index.js:31`
 - Runtime turn submission:
-  [apps/openagent-daemon/src/server.js](/Users/applefather/Documents/GitHub/openagent/apps/openagent-daemon/src/server.js:402)
+  `apps/openagent-daemon/src/server.js:402`
 
 ## Bottom line
 
@@ -265,7 +269,7 @@ The app-server docs describe `turn/start.input` as a mixed list of user input it
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/codex/codex-rs/app-server/README.md](/Users/applefather/Documents/GitHub/codex/codex-rs/app-server/README.md:463)
+- local reference: `codex/codex-rs/app-server/README.md:463`
 
 So OpenAgent does not need to invent a custom image protocol. The Codex app-server already has one.
 
@@ -281,7 +285,7 @@ The Python SDK exposes:
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/codex/sdk/python/src/codex_app_server/_inputs.py](/Users/applefather/Documents/GitHub/codex/sdk/python/src/codex_app_server/_inputs.py:8)
+- local reference: `codex/sdk/python/src/codex_app_server/_inputs.py:8`
 
 The TypeScript SDK similarly accepts structured turn input and separates:
 
@@ -290,8 +294,8 @@ The TypeScript SDK similarly accepts structured turn input and separates:
 
 References:
 
-- [/Users/applefather/Documents/GitHub/codex/sdk/typescript/src/thread.ts](/Users/applefather/Documents/GitHub/codex/sdk/typescript/src/thread.ts:22)
-- [/Users/applefather/Documents/GitHub/codex/sdk/typescript/README.md](/Users/applefather/Documents/GitHub/codex/sdk/typescript/README.md:70)
+- local reference: `codex/sdk/typescript/src/thread.ts:22`
+- local reference: `codex/sdk/typescript/README.md:70`
 
 This is an important design lesson: images should travel as their own item type, not be crammed into the text prompt.
 
@@ -307,7 +311,7 @@ The Rust image utility:
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/codex/codex-rs/utils/image/src/lib.rs](/Users/applefather/Documents/GitHub/codex/codex-rs/utils/image/src/lib.rs:1)
+- local reference: `codex/codex-rs/utils/image/src/lib.rs:1`
 
 This is a strong pattern for OpenAgent:
 
@@ -319,11 +323,11 @@ This is a strong pattern for OpenAgent:
 
 Codex protocol models carry `InputImage` content items explicitly:
 
-- [/Users/applefather/Documents/GitHub/codex/codex-rs/protocol/src/models.rs](/Users/applefather/Documents/GitHub/codex/codex-rs/protocol/src/models.rs:157)
+- local reference: `codex/codex-rs/protocol/src/models.rs:157`
 
 And truncation helpers preserve image items even when text gets shortened:
 
-- [/Users/applefather/Documents/GitHub/codex/codex-rs/utils/output-truncation/src/lib.rs](/Users/applefather/Documents/GitHub/codex/codex-rs/utils/output-truncation/src/lib.rs:27)
+- local reference: `codex/codex-rs/utils/output-truncation/src/lib.rs:27`
 
 That means the multimodal item boundary is preserved across the runtime, not flattened away after initial ingestion.
 
@@ -338,8 +342,8 @@ Codex has an `ImageDetail` concept with values like:
 
 References:
 
-- [/Users/applefather/Documents/GitHub/codex/codex-rs/protocol/src/models.rs](/Users/applefather/Documents/GitHub/codex/codex-rs/protocol/src/models.rs:163)
-- [/Users/applefather/Documents/GitHub/codex/codex-rs/tools/src/image_detail.rs](/Users/applefather/Documents/GitHub/codex/codex-rs/tools/src/image_detail.rs:1)
+- local reference: `codex/codex-rs/protocol/src/models.rs:163`
+- local reference: `codex/codex-rs/tools/src/image_detail.rs:1`
 
 OpenAgent does not need this in v1, but it is a useful future extension for large screenshots or detailed diagrams.
 
@@ -356,7 +360,7 @@ Its mobile attachment model stores:
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Models/CodexImageAttachment.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Models/CodexImageAttachment.swift:1)
+- local reference: `remodex/CodexMobile/CodexMobile/Models/CodexImageAttachment.swift:1`
 
 The attachment pipeline:
 
@@ -367,7 +371,7 @@ The attachment pipeline:
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Views/Turn/TurnAttachmentPipeline.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Views/Turn/TurnAttachmentPipeline.swift:1)
+- local reference: `remodex/CodexMobile/CodexMobile/Views/Turn/TurnAttachmentPipeline.swift:1`
 
 This is a very practical UI pattern for OpenAgent if Canvas images ever need preview chips or cached thumbnails.
 
@@ -377,7 +381,7 @@ The composer intercepts pasteboard images and downscales them before they ever e
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Views/Turn/TurnComposerInputTextView.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Views/Turn/TurnComposerInputTextView.swift:351)
+- local reference: `remodex/CodexMobile/CodexMobile/Views/Turn/TurnComposerInputTextView.swift:351`
 
 The lesson for OpenAgent is similar:
 
@@ -390,7 +394,7 @@ Remodex builds `turn/start.input` as an array of item objects and appends image 
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Services/CodexService+ThreadsTurns.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Services/CodexService+ThreadsTurns.swift:1273)
+- local reference: `remodex/CodexMobile/CodexMobile/Services/CodexService+ThreadsTurns.swift:1273`
 
 It sends images as:
 
@@ -404,7 +408,7 @@ for compatibility with runtimes that expect the alternate field name.
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Services/CodexService+ThreadsTurns.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Services/CodexService+ThreadsTurns.swift:1006)
+- local reference: `remodex/CodexMobile/CodexMobile/Services/CodexService+ThreadsTurns.swift:1006`
 
 This is especially relevant for OpenAgent because it is very close to the app-server integration style already used in this repo.
 
@@ -417,8 +421,8 @@ In Remodex:
 
 References:
 
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Services/CodexService+Messages.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Services/CodexService+Messages.swift:844)
-- [/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Views/Turn/TurnViewModel.swift](/Users/applefather/Documents/GitHub/remodex/CodexMobile/CodexMobile/Views/Turn/TurnViewModel.swift:1309)
+- local reference: `remodex/CodexMobile/CodexMobile/Services/CodexService+Messages.swift:844`
+- local reference: `remodex/CodexMobile/CodexMobile/Views/Turn/TurnViewModel.swift:1309`
 
 That separation is useful for OpenAgent too:
 
@@ -434,7 +438,7 @@ The bridge strips giant inline `data:image/...` blobs out of history payloads an
 
 Reference:
 
-- [/Users/applefather/Documents/GitHub/remodex/phodex-bridge/src/bridge.js](/Users/applefather/Documents/GitHub/remodex/phodex-bridge/src/bridge.js:1291)
+- local reference: `remodex/phodex-bridge/src/bridge.js:1291`
 
 This is a useful warning for OpenAgent:
 

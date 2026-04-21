@@ -1,3 +1,7 @@
+---
+sidebar_position: 3
+---
+
 # Group Context
 
 `Group context` is OpenAgent's rule for treating some Obsidian Canvas groups as default markdown context for a new Codex thread.
@@ -85,6 +89,6 @@ If you select only the text node and run `OpenAgent: New thread from selection`,
 ## Related Docs
 
 - [README.md](https://github.com/openagentmarket/openagent/blob/main/README.md)
-- [docs/USER_GUIDE.md](./USER_GUIDE.md)
+- [User Guide](../getting-started/user-guide.md)
 - [OpenAgent Canvas UX Guide.md](https://github.com/openagentmarket/openagent/blob/main/OpenAgent%20Canvas%20UX%20Guide.md)
-- [docs/OBSIDIAN_CANVAS_REFERENCE.md](./OBSIDIAN_CANVAS_REFERENCE.md)
+- [Obsidian Canvas Reference](./obsidian-canvas.md)

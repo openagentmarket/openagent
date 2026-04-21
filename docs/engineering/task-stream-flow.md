@@ -1,3 +1,7 @@
+---
+sidebar_position: 4
+---
+
 # Obsidian Task Stream Flow
 
 This note explains the current task-update model for the Obsidian plugin after removing automatic running-task polling.
@@ -159,5 +163,5 @@ Use this short version:
 
 - [apps/obsidian-plugin/main.js](https://github.com/openagentmarket/openagent/blob/main/apps/obsidian-plugin/main.js)
 - [apps/openagent-daemon/src/server.js](https://github.com/openagentmarket/openagent/blob/main/apps/openagent-daemon/src/server.js)
-- [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
-- [docs/OBSIDIAN_PLUGIN_DEV.md](./OBSIDIAN_PLUGIN_DEV.md)
+- [Architecture](./architecture.md)
+- [Plugin Development](./plugin-development.md)

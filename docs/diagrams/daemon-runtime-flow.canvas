@@ -9,8 +9,8 @@
 		{"id":"state-note","type":"text","text":"Relevant local state\n\n- ~/.openagent/daemon-config.json\n- ~/.openagent/daemon-state.json\n- ~/.openagent/daemon.log\n\nCanonical task state lives in the daemon, not in the plugin UI cache.","x":-80,"y":120,"width":420,"height":180,"color":"2"},
 		{"id":"plugin-main","type":"file","file":"apps/obsidian-plugin/main.js","x":1140,"y":-560,"width":380,"height":220},
 		{"id":"daemon-server","type":"file","file":"apps/openagent-daemon/src/server.js","x":1140,"y":-260,"width":380,"height":220},
-		{"id":"user-guide","type":"file","file":"docs/USER_GUIDE.md","x":1140,"y":40,"width":380,"height":220},
-		{"id":"project-map","type":"file","file":"docs/PROJECT_MAP.md","x":1140,"y":340,"width":380,"height":220}
+		{"id":"user-guide","type":"file","file":"docs/getting-started/user-guide.md","x":1140,"y":40,"width":380,"height":220},
+		{"id":"project-map","type":"file","file":"docs/concepts/project-map.md","x":1140,"y":340,"width":380,"height":220}
 	],
 	"edges":[
 		{"id":"edge-overview-start","fromNode":"overview","fromSide":"right","toNode":"daemon-start","toSide":"left"},

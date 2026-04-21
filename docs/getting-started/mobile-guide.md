@@ -1,3 +1,7 @@
+---
+sidebar_position: 3
+---
+
 # OpenAgent Mobile Guide
 
 This guide shows how to use OpenAgent from the Convos app on your phone while keeping Codex local on your own machine.
