@@ -31,6 +31,11 @@ const DEFAULT_SETTINGS = Object.freeze({
   enableDevSmokeRequests: false,
   workspaceRoot: "Workspaces",
 });
+const REPO_WORKSPACE_DIR_NAME = ".openagent";
+const WORKSPACE_CONFIG_FILE_NAME = "workspace.json";
+const DEFAULT_WORKSPACE_CANVAS_FILE = "Main.canvas";
+const WORKSPACE_INDEX_WAIT_MS = 4_000;
+const WORKSPACE_INDEX_POLL_MS = 100;
 const DAEMON_SANDBOX_MODE_OPTIONS = Object.freeze({
   WORKSPACE_WRITE: "workspace-write",
   DANGER_FULL_ACCESS: "danger-full-access",
@@ -114,6 +119,36 @@ function dirnameVaultPath(value) {
     return "";
   }
   return normalized.slice(0, normalized.lastIndexOf("/"));
+}
+
+function isVaultPathWithinRoot(vaultPath, rootPath) {
+  const normalizedVaultPath = String(vaultPath || "").replace(/^\/+|\/+$/g, "");
+  const normalizedRootPath = String(rootPath || "").replace(/^\/+|\/+$/g, "");
+  if (!normalizedVaultPath || !normalizedRootPath) {
+    return false;
+  }
+  return normalizedVaultPath === normalizedRootPath || normalizedVaultPath.startsWith(`${normalizedRootPath}/`);
+}
+
+function safeRealpathSync(value) {
+  try {
+    return fs.realpathSync.native ? fs.realpathSync.native(value) : fs.realpathSync(value);
+  } catch {
+    return "";
+  }
+}
+
+function pathExistsOrIsSymlink(value) {
+  try {
+    fs.lstatSync(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getDirectorySymlinkType() {
+  return process.platform === "win32" ? "junction" : "dir";
 }
 
 function normalizePanelTab(value) {
@@ -3308,7 +3343,7 @@ class OpenAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Workspace root")
-      .setDesc("Vault folder where OpenAgent creates one workspace folder per repo.")
+      .setDesc("Vault folder where OpenAgent creates one symlinked project entry per repo.")
       .addText((text) => {
         text
           .setPlaceholder("Workspaces")
@@ -3966,12 +4001,28 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return this.resolver?.getVaultBasePath?.() || "";
   }
 
+  getVaultAbsolutePath(vaultPath) {
+    const vaultBasePath = this.getVaultBasePath();
+    if (!vaultBasePath) {
+      return "";
+    }
+    return path.join(vaultBasePath, String(vaultPath || "").replace(/^\/+|\/+$/g, ""));
+  }
+
   getWorkspaceRootVaultPath() {
     return String(this.settings.workspaceRoot || DEFAULT_SETTINGS.workspaceRoot).trim() || DEFAULT_SETTINGS.workspaceRoot;
   }
 
+  getRepoWorkspaceDirectory(repoPath) {
+    return path.join(repoPath, REPO_WORKSPACE_DIR_NAME);
+  }
+
   getWorkspaceConfigFiles() {
-    return this.app.vault.getFiles().filter((file) => basenameVaultPath(file.path) === "workspace.json");
+    const workspaceRoot = this.getWorkspaceRootVaultPath();
+    return this.app.vault.getFiles().filter((file) => {
+      return basenameVaultPath(file.path) === WORKSPACE_CONFIG_FILE_NAME
+        && isVaultPathWithinRoot(file.path, workspaceRoot);
+    });
   }
 
   isWorkspaceSummariesLoading() {
@@ -4008,7 +4059,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   async readWorkspaceConfigSummary(file) {
-    if (!(file instanceof TFile) || basenameVaultPath(file.path) !== "workspace.json") {
+    if (!(file instanceof TFile) || basenameVaultPath(file.path) !== WORKSPACE_CONFIG_FILE_NAME) {
       return null;
     }
 
@@ -4024,7 +4075,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         folderPath: dirnameVaultPath(file.path),
         name: String(parsed?.name || basenameVaultPath(dirnameVaultPath(file.path)) || "Workspace").trim(),
         repoPath,
-        defaultCanvas: String(parsed?.defaultCanvas || "Main.canvas").trim() || "Main.canvas",
+        defaultCanvas: String(parsed?.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE).trim() || DEFAULT_WORKSPACE_CANVAS_FILE,
       };
     } catch {
       return null;
@@ -4066,7 +4117,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
   handleWorkspaceConfigMutation(file, oldPath = "") {
     const nextPath = file instanceof TFile ? String(file.path || "").trim() : "";
     const normalizedOldPath = String(oldPath || "").trim();
-    if (basenameVaultPath(nextPath) !== "workspace.json" && basenameVaultPath(normalizedOldPath) !== "workspace.json") {
+    const workspaceRoot = this.getWorkspaceRootVaultPath();
+    if (basenameVaultPath(nextPath) !== WORKSPACE_CONFIG_FILE_NAME && basenameVaultPath(normalizedOldPath) !== WORKSPACE_CONFIG_FILE_NAME) {
+      return;
+    }
+    if (!isVaultPathWithinRoot(nextPath, workspaceRoot) && !isVaultPathWithinRoot(normalizedOldPath, workspaceRoot)) {
       return;
     }
 
@@ -4116,6 +4171,15 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
   }
 
+  ensureFilesystemFolderExists(folderPath) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+
+  writeFilesystemFile(filePath, content) {
+    this.ensureFilesystemFolderExists(path.dirname(filePath));
+    fs.writeFileSync(filePath, content, "utf8");
+  }
+
   async writeVaultFile(vaultPath, content) {
     const existing = this.app.vault.getAbstractFileByPath(vaultPath);
     if (existing instanceof TFile) {
@@ -4153,6 +4217,115 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }, null, 2) + "\n";
   }
 
+  readRepoWorkspaceConfig(repoWorkspaceDir) {
+    const configPath = path.join(repoWorkspaceDir, WORKSPACE_CONFIG_FILE_NAME);
+    if (!fs.existsSync(configPath)) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const repoPath = normalizeRepoPath(parsed?.repoPath);
+      if (!repoPath) {
+        return null;
+      }
+      return {
+        configPath,
+        folderPath: repoWorkspaceDir,
+        name: String(parsed?.name || path.basename(repoPath) || "Workspace").trim() || "Workspace",
+        repoPath,
+        defaultCanvas: String(parsed?.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE).trim() || DEFAULT_WORKSPACE_CANVAS_FILE,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  ensureRepoWorkspaceFiles(repoPath, workspaceNameInput = "") {
+    const repoWorkspaceDir = this.getRepoWorkspaceDirectory(repoPath);
+    this.ensureFilesystemFolderExists(repoWorkspaceDir);
+
+    const existing = this.readRepoWorkspaceConfig(repoWorkspaceDir);
+    const workspaceName = String(existing?.name || workspaceNameInput || path.basename(repoPath)).trim() || path.basename(repoPath);
+    const defaultCanvas = String(existing?.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE).trim() || DEFAULT_WORKSPACE_CANVAS_FILE;
+    const workspace = {
+      configPath: path.join(repoWorkspaceDir, WORKSPACE_CONFIG_FILE_NAME),
+      folderPath: repoWorkspaceDir,
+      name: workspaceName,
+      repoPath,
+      defaultCanvas,
+    };
+
+    if (!existing) {
+      this.writeFilesystemFile(workspace.configPath, JSON.stringify({
+        name: workspace.name,
+        repoPath: workspace.repoPath,
+        defaultCanvas: workspace.defaultCanvas,
+        createdAt: new Date().toISOString(),
+      }, null, 2) + "\n");
+    }
+
+    const canvasPath = path.join(repoWorkspaceDir, workspace.defaultCanvas);
+    if (!fs.existsSync(canvasPath)) {
+      this.writeFilesystemFile(canvasPath, this.buildDefaultWorkspaceCanvas(workspace.name, workspace.repoPath));
+    }
+
+    return workspace;
+  }
+
+  resolveVaultWorkspaceLink(folderName, repoWorkspaceDir) {
+    const workspaceRoot = this.getWorkspaceRootVaultPath();
+    const repoWorkspaceRealPath = safeRealpathSync(repoWorkspaceDir) || path.normalize(repoWorkspaceDir);
+    let candidateFolderName = slugifyWorkspaceName(folderName);
+    let suffix = 2;
+
+    while (candidateFolderName) {
+      const folderPath = joinVaultPath(workspaceRoot, candidateFolderName);
+      const linkPath = this.getVaultAbsolutePath(folderPath);
+      if (!linkPath) {
+        throw new Error("OpenAgent could not resolve the current vault path.");
+      }
+
+      if (!pathExistsOrIsSymlink(linkPath)) {
+        return { folderPath, linkPath };
+      }
+
+      const existingTarget = safeRealpathSync(linkPath);
+      if (existingTarget && existingTarget === repoWorkspaceRealPath) {
+        return { folderPath, linkPath };
+      }
+
+      candidateFolderName = `${slugifyWorkspaceName(folderName)}-${suffix}`;
+      suffix += 1;
+    }
+
+    throw new Error("OpenAgent could not allocate a workspace entry for this repo.");
+  }
+
+  async ensureWorkspaceSymlink(repoWorkspaceDir, workspaceName) {
+    const workspaceRoot = this.getWorkspaceRootVaultPath();
+    await this.ensureVaultFolderExists(workspaceRoot);
+
+    const { folderPath, linkPath } = this.resolveVaultWorkspaceLink(workspaceName, repoWorkspaceDir);
+    if (!pathExistsOrIsSymlink(linkPath)) {
+      fs.symlinkSync(repoWorkspaceDir, linkPath, getDirectorySymlinkType());
+    }
+
+    return { folderPath, linkPath };
+  }
+
+  async waitForWorkspaceCanvasFile(vaultFolderPath, canvasFileName) {
+    const canvasPath = joinVaultPath(vaultFolderPath, canvasFileName);
+    const startedAt = Date.now();
+    while (Date.now() - startedAt <= WORKSPACE_INDEX_WAIT_MS) {
+      const abstractFile = this.app.vault.getAbstractFileByPath(canvasPath);
+      if (abstractFile instanceof TFile) {
+        return abstractFile;
+      }
+      await sleep(WORKSPACE_INDEX_POLL_MS);
+    }
+    return null;
+  }
+
   async createWorkspaceFromRepoPath(repoPathInput, workspaceNameInput = "") {
     const repoPath = normalizeRepoPath(repoPathInput);
     if (!repoPath) {
@@ -4170,36 +4343,20 @@ module.exports = class OpenAgentPlugin extends Plugin {
       return existing;
     }
 
-    const workspaceRoot = this.getWorkspaceRootVaultPath();
-    const workspaceName = String(workspaceNameInput || "").trim() || path.basename(repoPath);
-    const baseFolderName = slugifyWorkspaceName(workspaceName);
-    let folderPath = joinVaultPath(workspaceRoot, baseFolderName);
-    let suffix = 2;
-    while (this.app.vault.getAbstractFileByPath(joinVaultPath(folderPath, "workspace.json"))) {
-      folderPath = joinVaultPath(workspaceRoot, `${baseFolderName}-${suffix}`);
-      suffix += 1;
-    }
-
-    await this.ensureVaultFolderExists(folderPath);
-
+    const repoWorkspace = this.ensureRepoWorkspaceFiles(repoPath, workspaceNameInput);
+    const { folderPath } = await this.ensureWorkspaceSymlink(repoWorkspace.folderPath, repoWorkspace.name);
     const workspace = {
-      configPath: joinVaultPath(folderPath, "workspace.json"),
+      configPath: joinVaultPath(folderPath, WORKSPACE_CONFIG_FILE_NAME),
       folderPath,
-      name: workspaceName,
-      repoPath,
-      defaultCanvas: "Main.canvas",
+      name: repoWorkspace.name,
+      repoPath: repoWorkspace.repoPath,
+      defaultCanvas: repoWorkspace.defaultCanvas,
     };
 
-    await this.writeVaultFile(workspace.configPath, JSON.stringify({
-      name: workspace.name,
-      repoPath: workspace.repoPath,
-      defaultCanvas: workspace.defaultCanvas,
-      createdAt: new Date().toISOString(),
-    }, null, 2) + "\n");
-    await this.writeVaultFile(
-      joinVaultPath(folderPath, workspace.defaultCanvas),
-      this.buildDefaultWorkspaceCanvas(workspace.name, workspace.repoPath)
-    );
+    const canvasFile = await this.waitForWorkspaceCanvasFile(workspace.folderPath, workspace.defaultCanvas);
+    if (!canvasFile) {
+      throw new Error(`OpenAgent created ${REPO_WORKSPACE_DIR_NAME}, but Obsidian has not indexed the new workspace link yet. Try reopening the workspace picker.`);
+    }
 
     await this.ensureWorkspaceSummariesLoaded({ force: true });
     await this.openWorkspace(workspace);
@@ -4208,7 +4365,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   async openWorkspace(workspace) {
-    const canvasPath = joinVaultPath(workspace.folderPath, workspace.defaultCanvas || "Main.canvas");
+    const canvasPath = joinVaultPath(workspace.folderPath, workspace.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE);
     const canvasFile = this.app.vault.getAbstractFileByPath(canvasPath);
     if (!(canvasFile instanceof TFile)) {
       throw new Error(`Default canvas not found: ${canvasPath}`);

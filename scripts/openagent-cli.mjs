@@ -34,6 +34,9 @@ const DEFAULT_CONVOS_HOST = "127.0.0.1";
 const DEFAULT_CONVOS_PORT = 4321;
 const DEFAULT_XMTP_ENV = "production";
 const PLUGIN_ID = "openagent";
+const REPO_WORKSPACE_DIR_NAME = ".openagent";
+const WORKSPACE_CONFIG_FILE_NAME = "workspace.json";
+const DEFAULT_WORKSPACE_CANVAS_FILE = "Main.canvas";
 
 async function main() {
   const args = process.argv.slice(2).filter((value, index) => !(value === "--" && index === 0));
@@ -656,6 +659,87 @@ function sanitizeVaultName(value) {
   return trimmed.replace(/[/:]/g, "-");
 }
 
+function safeRealpathSync(value) {
+  try {
+    return fs.realpathSync.native ? fs.realpathSync.native(value) : fs.realpathSync(value);
+  } catch {
+    return "";
+  }
+}
+
+function pathExistsOrIsSymlink(value) {
+  try {
+    fs.lstatSync(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getDirectorySymlinkType() {
+  return process.platform === "win32" ? "junction" : "dir";
+}
+
+function ensureRepoWorkspaceFiles(repoPath, workspaceNameInput = "") {
+  const repoWorkspaceDir = path.join(repoPath, REPO_WORKSPACE_DIR_NAME);
+  fs.mkdirSync(repoWorkspaceDir, { recursive: true });
+
+  const configPath = path.join(repoWorkspaceDir, WORKSPACE_CONFIG_FILE_NAME);
+  const existingConfig = readJson(configPath, null);
+  const workspaceName = String(existingConfig?.name || workspaceNameInput || path.basename(repoPath)).trim() || path.basename(repoPath);
+  const defaultCanvas = String(existingConfig?.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE).trim() || DEFAULT_WORKSPACE_CANVAS_FILE;
+
+  if (!existingConfig || normalizeDirectoryPath(existingConfig?.repoPath) !== repoPath) {
+    writeJson(configPath, {
+      createdAt: new Date().toISOString(),
+      defaultCanvas,
+      name: workspaceName,
+      repoPath,
+    });
+  }
+
+  const canvasPath = path.join(repoWorkspaceDir, defaultCanvas);
+  if (!fs.existsSync(canvasPath)) {
+    fs.writeFileSync(canvasPath, buildDefaultWorkspaceCanvas(workspaceName, repoPath), "utf8");
+  }
+
+  return {
+    defaultCanvas,
+    name: workspaceName,
+    repoWorkspaceDir,
+  };
+}
+
+function resolveWorkspaceLinkPath(vaultPath, workspaceRoot, workspaceName, repoWorkspaceDir) {
+  const repoWorkspaceRealPath = safeRealpathSync(repoWorkspaceDir) || path.normalize(repoWorkspaceDir);
+  const baseFolderName = slugifyWorkspaceName(workspaceName);
+  let folderName = baseFolderName;
+  let suffix = 2;
+
+  while (folderName) {
+    const candidatePath = path.join(vaultPath, workspaceRoot, folderName);
+    if (!pathExistsOrIsSymlink(candidatePath)) {
+      return {
+        folderName,
+        linkPath: candidatePath,
+      };
+    }
+
+    const existingTarget = safeRealpathSync(candidatePath);
+    if (existingTarget && existingTarget === repoWorkspaceRealPath) {
+      return {
+        folderName,
+        linkPath: candidatePath,
+      };
+    }
+
+    folderName = `${baseFolderName}-${suffix}`;
+    suffix += 1;
+  }
+
+  throw new Error("Could not allocate a workspace link inside the Obsidian vault.");
+}
+
 function ensureWorkspaceScaffold({ repoPath, vaultPath, workspaceName }) {
   const normalizedRepoPath = normalizeDirectoryPath(repoPath);
   const pluginStatePath = path.join(vaultPath, ".obsidian", "plugins", PLUGIN_ID, "data.json");
@@ -666,37 +750,26 @@ function ensureWorkspaceScaffold({ repoPath, vaultPath, workspaceName }) {
     return existingWorkspace;
   }
 
-  const nextWorkspaceName = String(workspaceName || "").trim() || path.basename(normalizedRepoPath);
-  const baseFolderName = slugifyWorkspaceName(nextWorkspaceName);
-  let folderName = baseFolderName;
-  let suffix = 2;
-  while (fs.existsSync(path.join(vaultPath, workspaceRoot, folderName, "workspace.json"))) {
-    folderName = `${baseFolderName}-${suffix}`;
-    suffix += 1;
+  const repoWorkspace = ensureRepoWorkspaceFiles(normalizedRepoPath, workspaceName);
+  const workspaceRootPath = path.join(vaultPath, workspaceRoot);
+  fs.mkdirSync(workspaceRootPath, { recursive: true });
+  const { folderName, linkPath } = resolveWorkspaceLinkPath(
+    vaultPath,
+    workspaceRoot,
+    repoWorkspace.name,
+    repoWorkspace.repoWorkspaceDir,
+  );
+  if (!pathExistsOrIsSymlink(linkPath)) {
+    fs.symlinkSync(repoWorkspace.repoWorkspaceDir, linkPath, getDirectorySymlinkType());
   }
 
-  const workspaceFolderPath = path.join(vaultPath, workspaceRoot, folderName);
-  fs.mkdirSync(workspaceFolderPath, { recursive: true });
-
   const workspace = {
-    canvasPath: path.join(workspaceRoot, folderName, "Main.canvas"),
-    configPath: path.join(workspaceRoot, folderName, "workspace.json"),
+    canvasPath: path.join(workspaceRoot, folderName, repoWorkspace.defaultCanvas),
+    configPath: path.join(workspaceRoot, folderName, WORKSPACE_CONFIG_FILE_NAME),
     folderPath: path.join(workspaceRoot, folderName),
-    name: nextWorkspaceName,
+    name: repoWorkspace.name,
     repoPath: normalizedRepoPath,
   };
-
-  writeJson(path.join(vaultPath, workspace.configPath), {
-    createdAt: new Date().toISOString(),
-    defaultCanvas: "Main.canvas",
-    name: workspace.name,
-    repoPath: workspace.repoPath,
-  });
-  fs.writeFileSync(
-    path.join(vaultPath, workspace.canvasPath),
-    buildDefaultWorkspaceCanvas(workspace.name, workspace.repoPath),
-    "utf8",
-  );
 
   return workspace;
 }
@@ -717,7 +790,7 @@ function findWorkspaceForRepo(vaultPath, repoPath, workspaceRoot = "Workspaces")
 
     const workspaceFolderPath = path.dirname(configPath);
     return {
-      canvasPath: path.relative(vaultPath, path.join(workspaceFolderPath, String(parsed?.defaultCanvas || "Main.canvas"))),
+      canvasPath: path.relative(vaultPath, path.join(workspaceFolderPath, String(parsed?.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE))),
       configPath: path.relative(vaultPath, configPath),
       folderPath: path.relative(vaultPath, workspaceFolderPath),
       name: String(parsed?.name || path.basename(workspaceFolderPath) || "Workspace").trim(),
@@ -734,11 +807,11 @@ function listWorkspaceConfigPaths(rootPath) {
 
   for (const entry of entries) {
     const absolutePath = path.join(rootPath, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() || entry.isSymbolicLink()) {
       results.push(...listWorkspaceConfigPaths(absolutePath));
       continue;
     }
-    if (entry.isFile() && entry.name === "workspace.json") {
+    if (entry.isFile() && entry.name === WORKSPACE_CONFIG_FILE_NAME) {
       results.push(absolutePath);
     }
   }

@@ -25,7 +25,7 @@ The usual loop is:
 
 ### Workspace
 
-A workspace is a vault folder under `Workspaces/` that points to one real repo on disk.
+A workspace is a symlinked vault entry under `Workspaces/` that points at one repo's `.openagent/` folder on disk.
 
 Each workspace contains:
 
@@ -108,7 +108,7 @@ OpenAgent currently exposes these settings in Obsidian:
 
 Run `OpenAgent: Choose workspace` and point it at the repo you want Codex to use.
 
-OpenAgent will create a workspace folder in your vault and a default `Main.canvas` if one does not exist yet.
+OpenAgent will create `repo/.openagent/`, write `workspace.json` plus a default `Main.canvas` there, then add a symlink for that repo under your configured workspace root in the vault.
 
 If you later create additional canvases for that same repo, keep them inside the same workspace folder. For example:
 
