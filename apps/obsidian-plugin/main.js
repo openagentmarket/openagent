@@ -3077,22 +3077,6 @@ class OpenAgentView extends ItemView {
       detail.createDiv({ cls: "oa-banner oa-banner-error", text: activeTask.lastError });
     }
 
-    const selectionPreviewLines = this.plugin.getSelectionPreviewLines(activeTask.selectionContext);
-    if (selectionPreviewLines.length > 0) {
-      const contextSection = detail.createDiv({ cls: "oa-task-section oa-settings-card" });
-      contextSection.createDiv({ cls: "oa-detail-title", text: "Selected context" });
-      const summary = this.plugin.summarizeSelection(activeTask.selectionContext);
-      if (summary) {
-        contextSection.createDiv({ cls: "oa-task-meta", text: summary });
-      }
-      selectionPreviewLines.forEach((line, index) => {
-        contextSection.createDiv({
-          cls: index === 0 ? "oa-task-meta oa-selection-debug" : "oa-task-meta",
-          text: line,
-        });
-      });
-    }
-
     const messagesSection = detail.createDiv({ cls: "oa-messages-section" });
     const messages = Array.isArray(activeTask.messages) ? activeTask.messages : [];
     const messagesLoaded = this.plugin.taskHasLoadedMessages(activeTask);
@@ -7760,36 +7744,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     return "";
-  }
-
-  getSelectionPreviewLines(selection) {
-    const lines = [this.describeSelectionDebug(selection)];
-
-    (selection?.textBlocks || []).forEach((block, index) => {
-      const text = String(block?.text || "").trim();
-      if (!text) {
-        return;
-      }
-
-      lines.push(`Text node ${index + 1}: ${this.truncateInline(text, 240)}`);
-    });
-
-    (selection?.markdownFiles || []).forEach((file, index) => {
-      const filePath = String(file?.path || "").trim();
-      const preview = this.truncateInline(String(file?.content || "").trim(), 180);
-      const label = `Markdown file ${index + 1}: ${filePath || file?.name || "Untitled"}`;
-      lines.push(label);
-      if (preview) {
-        lines.push(preview);
-      }
-    });
-
-    (selection?.imageFiles || []).forEach((file, index) => {
-      const filePath = String(file?.path || "").trim();
-      lines.push(`Image file ${index + 1}: ${filePath || file?.name || "Untitled"}`);
-    });
-
-    return lines;
   }
 
   getSelectionImageResourceUrl(file) {
