@@ -178,27 +178,20 @@ function createDaemonStatusSnapshot(overrides = {}) {
   };
 }
 
-function formatDaemonCheckedAt(value) {
-  const timestamp = Number(value) || 0;
-  if (!timestamp) {
-    return "";
+function formatDaemonStatusError(message) {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) {
+    return "Can't reach the local Codex server.";
   }
 
-  try {
-    return new Date(timestamp).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return "";
+  const lowercaseMessage = normalizedMessage.toLowerCase();
+  if (lowercaseMessage.includes("config was not found")) {
+    return "Codex server is not configured yet.";
   }
-}
-
-function getDaemonEndpointLabel(status) {
-  const host = String(status?.host || "").trim();
-  const port = String(status?.port || "").trim();
-  return host && port ? `${host}:${port}` : "";
+  if (lowercaseMessage.includes("not responding") || lowercaseMessage.includes("unable to reach")) {
+    return "Can't reach the local Codex server.";
+  }
+  return normalizedMessage;
 }
 
 function getDaemonStatusTagClassName(state) {
@@ -1025,7 +1018,7 @@ class OpenAgentDaemonLauncher {
     const launchSpec = this.resolveLaunchSpec();
     if (!launchSpec?.command) {
       throw new Error(
-        "OpenAgent daemon is not running, and auto-launch could not find this repo. Set a daemon launch command in OpenAgent settings."
+        "Codex server is not running, and auto-launch could not find this repo. Set a server launch command in OpenAgent settings."
       );
     }
 
@@ -1129,7 +1122,7 @@ class OpenAgentDaemonLauncher {
       }
     }
 
-    throw lastError || new Error("OpenAgent daemon did not become ready.");
+    throw lastError || new Error("Codex server did not become ready.");
   }
 }
 
@@ -1145,12 +1138,12 @@ class OpenAgentApiClient {
     }
 
     if (!fs.existsSync(DAEMON_CONFIG_PATH)) {
-      throw new Error("OpenAgent daemon config was not found. Start the daemon first.");
+      throw new Error("Codex server config was not found. Start the server first.");
     }
 
     const parsed = JSON.parse(fs.readFileSync(DAEMON_CONFIG_PATH, "utf8"));
     if (!parsed?.host || !parsed?.port || !parsed?.token) {
-      throw new Error("OpenAgent daemon config is invalid.");
+      throw new Error("Codex server config is invalid.");
     }
 
     this.config = parsed;
@@ -1202,12 +1195,12 @@ class OpenAgentApiClient {
           try {
             parsed = buffer.trim() ? JSON.parse(buffer) : {};
           } catch (error) {
-            reject(new Error(`Unable to parse daemon response: ${error.message}`));
+            reject(new Error(`Unable to parse Codex server response: ${error.message}`));
             return;
           }
 
           if (response.statusCode >= 400) {
-            reject(new Error(parsed?.error?.message || `Daemon request failed (${response.statusCode}).`));
+            reject(new Error(parsed?.error?.message || `Codex server request failed (${response.statusCode}).`));
             return;
           }
 
@@ -1216,7 +1209,7 @@ class OpenAgentApiClient {
       });
 
       request.on("error", (error) => {
-        reject(new Error(`Unable to reach the OpenAgent daemon: ${error.message}`));
+        reject(new Error(`Unable to reach the Codex server: ${error.message}`));
       });
 
       if (payload) {
@@ -1230,8 +1223,8 @@ class OpenAgentApiClient {
   shouldTryAutoLaunch(error) {
     const message = String(error?.message || error || "").toLowerCase();
     return (
-      message.includes("daemon config was not found")
-      || message.includes("unable to reach the openagent daemon")
+      message.includes("codex server config was not found")
+      || message.includes("unable to reach the codex server")
       || message.includes("econnrefused")
       || message.includes("connect enoent")
     );
@@ -2895,8 +2888,8 @@ class OpenAgentView extends ItemView {
       brandTitleRow.createSpan({
         cls: "oa-daemon-online-dot",
         attr: {
-          "aria-label": "Daemon online",
-          title: this.plugin.getDaemonStatusDetail() || "OpenAgent daemon is online.",
+          "aria-label": "Codex server online",
+          title: this.plugin.getDaemonStatusDetail() || "Codex server is online.",
         },
       });
     }
@@ -2942,7 +2935,7 @@ class OpenAgentView extends ItemView {
         text: "Workspace",
       });
       const workspaceSection = workspaceBlock.createDiv({
-        cls: "oa-settings-section oa-settings-card oa-workspace-settings-section",
+        cls: "oa-settings-section oa-workspace-settings-section",
       });
       const workspaceSummary = workspaceSection.createDiv({ cls: "oa-settings-list" });
       const workspaceRow = workspaceSummary.createDiv({ cls: "oa-settings-row" });
@@ -2953,16 +2946,16 @@ class OpenAgentView extends ItemView {
         attr: activeWorkspace?.repoPath ? { title: activeWorkspace.repoPath } : {},
       });
 
-      const workspaceActions = workspaceSection.createDiv({ cls: "oa-action-row" });
+      const workspaceActions = workspaceSection.createDiv({ cls: "oa-action-row oa-settings-actions" });
       const chooseWorkspaceButton = this.makeButton(workspaceActions, "New workspace", () => this.plugin.showWorkspacePicker());
       chooseWorkspaceButton.setCta();
 
       const daemonBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
       daemonBlock.createEl("h3", {
         cls: "oa-settings-section-title",
-        text: "Daemon",
+        text: "Codex server",
       });
-      const daemonSection = daemonBlock.createDiv({ cls: "oa-settings-section oa-settings-card" });
+      const daemonSection = daemonBlock.createDiv({ cls: "oa-settings-section oa-settings-summary" });
       const daemonSummary = daemonSection.createDiv({ cls: "oa-settings-list" });
       const daemonRow = daemonSummary.createDiv({ cls: "oa-settings-row" });
       daemonRow.createDiv({ cls: "oa-settings-label", text: "Connection" });
@@ -2973,10 +2966,10 @@ class OpenAgentView extends ItemView {
       });
       daemonValue.createDiv({
         cls: "oa-task-meta",
-        text: this.plugin.getDaemonStatusDetail() || "Checks whether the local OpenAgent daemon responds to /health.",
+        text: this.plugin.getDaemonStatusDetail() || "Checks whether the local Codex server is reachable.",
       });
 
-      const daemonActions = daemonSection.createDiv({ cls: "oa-action-row" });
+      const daemonActions = daemonSection.createDiv({ cls: "oa-action-row oa-settings-actions" });
       this.makeButton(daemonActions, "Refresh", () => {
         void this.plugin.refreshDaemonStatus({
           silent: false,
@@ -2985,11 +2978,13 @@ class OpenAgentView extends ItemView {
       }, false, {
         runOnMouseDown: true,
       });
-      this.makeButton(daemonActions, "Start daemon", () => {
-        void this.plugin.startDaemonWithFeedback();
-      }, false, {
-        runOnMouseDown: true,
-      });
+      if (this.plugin.getDaemonStatus().state !== DAEMON_CONNECTION_STATES.ONLINE) {
+        this.makeButton(daemonActions, "Start server", () => {
+          void this.plugin.startDaemonWithFeedback();
+        }, false, {
+          runOnMouseDown: true,
+        });
+      }
 
       const threadsBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
       const threadsHeader = threadsBlock.createDiv({ cls: "oa-settings-section-header" });
@@ -3015,7 +3010,7 @@ class OpenAgentView extends ItemView {
         button.addEventListener("click", () => this.setSettingsTaskTab(tab.id));
       });
 
-      const threadSection = threadsBlock.createDiv({ cls: "oa-task-section oa-settings-card" });
+      const threadSection = threadsBlock.createDiv({ cls: "oa-task-section oa-settings-task-section" });
       const displayedTasks = settingsTaskTab === "archived"
         ? archivedTasks
         : (settingsTaskTab === "running" ? runningTasks : tasks);
@@ -3054,16 +3049,22 @@ class OpenAgentView extends ItemView {
         this.renderGroupContextPreview(detail, selectedGroupContextPreview);
       } else {
         const emptyStateCard = detail.createDiv({ cls: "oa-empty-state-card" });
+        const emptyStateTitle = activeCanvasPath
+          ? "Select a canvas node and start a conversation."
+          : "Open a canvas to start";
+        const emptyStateCopy = activeCanvasPath
+          ? ""
+          : "Open a Canvas and select a node to start a conversation.";
         emptyStateCard.createDiv({
           cls: "oa-empty-state-title",
-          text: activeCanvasPath ? "No conversation selected" : "Open a canvas to start",
+          text: emptyStateTitle,
         });
-        emptyStateCard.createDiv({
-          cls: "oa-muted oa-empty-state-copy",
-          text: activeCanvasPath
-            ? "Select a canvas node and start a conversation."
-            : "Open a Canvas and select a node to start a conversation.",
-        });
+        if (emptyStateCopy) {
+          emptyStateCard.createDiv({
+            cls: "oa-muted oa-empty-state-copy",
+            text: emptyStateCopy,
+          });
+        }
         const emptyActions = emptyStateCard.createDiv({ cls: "oa-action-row oa-empty-state-actions" });
         this.makeButton(emptyActions, "New conversation", () => this.plugin.handleNewThreadFromSelectionCommand(), false, {
           runOnMouseDown: true,
@@ -3355,8 +3356,8 @@ class OpenAgentSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Daemon launch command")
-      .setDesc("Optional. When the daemon is offline, OpenAgent will run this shell command and retry automatically.")
+      .setName("Codex server launch command")
+      .setDesc("Optional. When the server is offline, OpenAgent will run this shell command and retry automatically.")
       .addText((text) => {
         text
           .setPlaceholder("cd /path/to/openagent && pnpm dev:daemon")
@@ -3368,7 +3369,7 @@ class OpenAgentSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Daemon launch directory")
+      .setName("Codex server launch directory")
       .setDesc("Optional working directory for the launch command above. Leave blank to use auto-discovery.")
       .addText((text) => {
         text
@@ -3380,9 +3381,9 @@ class OpenAgentSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
-      .setName(`Daemon status: ${this.plugin.getDaemonStatusLabel()}`)
-      .setDesc(this.plugin.getDaemonStatusDetail() || "Checks whether the local OpenAgent daemon responds to /health.")
+    const daemonStatusSetting = new Setting(containerEl)
+      .setName(`Codex server status: ${this.plugin.getDaemonStatusLabel()}`)
+      .setDesc(this.plugin.getDaemonStatusDetail() || "Checks whether the local Codex server is reachable.")
       .addButton((button) => {
         button.setButtonText("Refresh");
         button.onClick(async () => {
@@ -3391,13 +3392,15 @@ class OpenAgentSettingTab extends PluginSettingTab {
             forceRefresh: true,
           });
         });
-      })
-      .addButton((button) => {
+      });
+    if (this.plugin.getDaemonStatus().state !== DAEMON_CONNECTION_STATES.ONLINE) {
+      daemonStatusSetting.addButton((button) => {
         button.setButtonText("Start");
         button.onClick(async () => {
           await this.plugin.startDaemonWithFeedback();
         });
       });
+    }
 
     new Setting(containerEl)
       .setName("Codex sandbox mode")
@@ -3429,15 +3432,17 @@ class OpenAgentSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(containerEl)
-      .setName("Start daemon now")
-      .setDesc("Useful after changing launch settings or if you want to warm it up before using Canvas.")
-      .addButton((button) => {
-        button.setButtonText("Start");
-        button.onClick(async () => {
-          await this.plugin.startDaemonWithFeedback();
+    if (this.plugin.getDaemonStatus().state !== DAEMON_CONNECTION_STATES.ONLINE) {
+      new Setting(containerEl)
+        .setName("Start server now")
+        .setDesc("Useful after changing launch settings or if you want to warm it up before using Canvas.")
+        .addButton((button) => {
+          button.setButtonText("Start");
+          button.onClick(async () => {
+            await this.plugin.startDaemonWithFeedback();
+          });
         });
-      });
+    }
 
     containerEl.createEl("h3", { text: "Developer options" });
 
@@ -3628,7 +3633,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.addCommand({
       id: "openagent-start-daemon",
-      name: "Start daemon",
+      name: "Start Codex server",
       callback: () => {
         void this.startDaemonWithFeedback();
       },
@@ -3821,42 +3826,19 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   getDaemonStatusDetail() {
     const status = this.getDaemonStatus();
-    const endpoint = getDaemonEndpointLabel(status);
-    const checkedAt = formatDaemonCheckedAt(status.checkedAt);
-    const parts = [];
-
     if (status.state === DAEMON_CONNECTION_STATES.ONLINE) {
-      if (endpoint) {
-        parts.push(`Listening on ${endpoint}`);
+      if (status.runtimeAvailable === false) {
+        return status.runtimeMessage || "Connected, but Codex runtime needs attention.";
       }
-      if (status.runtimeAvailable === true) {
-        parts.push("Codex runtime ready");
-      } else if (status.runtimeMessage) {
-        parts.push(status.runtimeMessage);
-      }
-      if (status.lastRuntimeError) {
-        parts.push(`Last runtime error: ${status.lastRuntimeError}`);
-      }
-    } else if (status.state === DAEMON_CONNECTION_STATES.OFFLINE) {
-      if (status.error) {
-        parts.push(status.error);
-      } else {
-        parts.push("OpenAgent daemon is not responding.");
-      }
-      if (endpoint) {
-        parts.push(`Expected ${endpoint}`);
-      }
-    } else if (status.state === DAEMON_CONNECTION_STATES.CHECKING) {
-      parts.push(endpoint ? `Checking ${endpoint}` : "Checking the local daemon");
-    } else {
-      parts.push("Status has not been checked yet.");
+      return "Connected to local Codex server.";
     }
-
-    if (checkedAt) {
-      parts.push(`Checked ${checkedAt}`);
+    if (status.state === DAEMON_CONNECTION_STATES.OFFLINE) {
+      return formatDaemonStatusError(status.error);
     }
-
-    return parts.join(" - ");
+    if (status.state === DAEMON_CONNECTION_STATES.CHECKING) {
+      return "Checking local Codex server...";
+    }
+    return "Status has not been checked yet.";
   }
 
   async refreshDaemonStatus(options = {}) {
@@ -3928,7 +3910,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         silent: false,
         forceRefresh: true,
       });
-      new Notice("OpenAgent daemon is running.");
+      new Notice("Codex server is running.");
       return true;
     } catch (error) {
       this.runtimeIssue = String(error?.message || error);

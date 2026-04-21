@@ -261,7 +261,7 @@
 .oa-settings-page-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .oa-task-list,
@@ -751,10 +751,10 @@
 .oa-settings-section,
 .oa-settings-card {
   margin: 0;
-  padding: 12px;
-  border: 1px solid var(--oa-border-soft);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--background-primary) 72%, var(--background-secondary));
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -768,10 +768,15 @@
   gap: 10px;
 }
 
+.oa-settings-section-block + .oa-settings-section-block {
+  padding-top: 14px;
+  border-top: 1px solid var(--oa-border-soft);
+}
+
 .oa-settings-section-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 10px;
   min-width: 0;
 }
@@ -785,10 +790,12 @@
 }
 
 .oa-settings-inline-tabs {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
 .oa-settings-inline-tab {
@@ -803,6 +810,8 @@
   font-size: 0.78rem;
   line-height: 1.2;
   box-shadow: none;
+  flex: 1 1 78px;
+  text-align: center;
 }
 
 .oa-settings-inline-tab:hover {
@@ -965,6 +974,21 @@
   word-break: break-word;
 }
 
+.oa-settings-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.oa-settings-actions button {
+  width: 100%;
+  justify-content: center;
+}
+
+.oa-settings-task-section {
+  padding-top: 2px;
+}
+
 .oa-composer-input-shell {
   position: relative;
   border: 1px solid var(--oa-border-soft);
@@ -1124,8 +1148,8 @@
   box-shadow: none !important;
 }
 
-.oa-settings-card .oa-task-item,
-.oa-settings-card .oa-workspace-item {
+.oa-settings-task-section .oa-task-item,
+.oa-settings-task-section .oa-workspace-item {
   background: color-mix(in srgb, var(--background-primary) 82%, transparent);
   box-shadow: none;
 }
@@ -1160,11 +1184,6 @@
 }
 
 @media (min-width: 680px) {
-  .oa-settings-row {
-    grid-template-columns: minmax(88px, 0.8fr) minmax(0, 1.2fr);
-    gap: 10px;
-  }
-
   .openagent-view .oa-settings-section .setting-item {
     grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
     align-items: center;
@@ -1174,5 +1193,13 @@
     grid-template-columns: minmax(0, 1fr) auto;
     justify-self: end;
     width: min(100%, 220px);
+  }
+
+  .oa-settings-actions {
+    grid-template-columns: repeat(2, minmax(0, max-content));
+  }
+
+  .oa-settings-actions button {
+    width: auto;
   }
 }

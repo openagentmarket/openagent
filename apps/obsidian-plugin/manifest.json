@@ -3,7 +3,7 @@
   "name": "OpenAgent",
   "version": "0.1.1",
   "minAppVersion": "1.5.0",
-  "description": "Run OpenAgent tasks from Obsidian Canvas through a local daemon and Codex Desktop.",
+  "description": "Run OpenAgent tasks from Obsidian Canvas through a local Codex server and Codex Desktop.",
   "author": "OpenAgentMarket",
   "authorUrl": "https://github.com/openagentmarket/openagent",
   "isDesktopOnly": true
