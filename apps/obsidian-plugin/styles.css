@@ -1051,9 +1051,9 @@
 .oa-composer-action-button.is-stop {
   min-width: 52px;
   padding: 0 10px;
-  border-color: color-mix(in srgb, var(--color-yellow) 42%, var(--oa-border-soft));
-  background: color-mix(in srgb, var(--color-yellow) 58%, var(--oa-surface));
-  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--color-red) 42%, var(--oa-border-soft));
+  background: color-mix(in srgb, var(--color-red) 15%, var(--oa-surface-strong));
+  color: color-mix(in srgb, var(--color-red) 82%, var(--text-normal));
   font-size: 0.78rem;
   font-weight: 600;
 }
@@ -1068,12 +1068,17 @@
 }
 
 .oa-composer-action-button.is-stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-yellow) 72%, var(--oa-surface-strong));
-  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--color-red) 54%, var(--oa-border-soft));
+  background: color-mix(in srgb, var(--color-red) 22%, var(--oa-surface-strong));
+  color: color-mix(in srgb, var(--color-red) 88%, var(--text-normal));
 }
 
 .oa-composer-action-button:disabled {
   opacity: 0.45;
+}
+
+.oa-hotkey-capture-input {
+  cursor: pointer;
 }
 
 .openagent-view .oa-settings-section .setting-item {
