@@ -22,9 +22,30 @@ What it does:
 - starts the local runtime
 - creates `Workspaces/<repo-name>/Main.canvas`
 
-Start here:
+Use this order:
 
-- [README Quick Start](https://github.com/openagentmarket/openagent/blob/main/README.md#quick-start)
+1. Install the Codex skill from:
+
+```text
+https://github.com/openagentmarket/openagent/tree/main/skills/openagent-canvas-bootstrap
+```
+
+2. Restart Codex so it picks up the skill.
+3. Open the repo you want to use with Codex.
+4. Make sure your Obsidian vault is already open.
+5. Start a new Codex thread and paste:
+
+```text
+Use the openagent-canvas-bootstrap skill to set up OpenAgent for this repo.
+```
+
+For the full repo-level quick start, see the [README Quick Start](https://github.com/openagentmarket/openagent/blob/main/README.md#quick-start).
+
+To update the installed skill and local OpenAgent checkout later, start a new Codex thread and paste:
+
+```text
+Use the openagent-canvas-bootstrap skill to update OpenAgent on this machine.
+```
 
 ### Manual: plugin install by hand
 
