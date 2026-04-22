@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   daemonSandboxMode: "workspace-write",
   enableDebugLogging: false,
   enableDevSmokeRequests: false,
+  stopActiveTaskHotkey: "",
   workspaceRoot: "Workspaces",
 });
 const REPO_WORKSPACE_DIR_NAME = ".openagent";
@@ -88,6 +89,7 @@ const DAEMON_CONNECTION_STATES = Object.freeze({
   ONLINE: "online",
   OFFLINE: "offline",
 });
+const HOTKEY_CAPTURE_INPUT_CLASS = "oa-hotkey-capture-input";
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -205,6 +207,225 @@ function getDaemonStatusTagClassName(state) {
     default:
       return "";
   }
+}
+
+function normalizeHotkeyModifierToken(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  switch (normalized) {
+    case "mod":
+      return "Mod";
+    case "cmd":
+    case "command":
+    case "meta":
+      return "Meta";
+    case "ctrl":
+    case "control":
+      return "Ctrl";
+    case "alt":
+    case "option":
+      return "Alt";
+    case "shift":
+      return "Shift";
+    default:
+      return "";
+  }
+}
+
+function normalizeHotkeyPrimaryKey(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const lowercase = normalized.toLowerCase();
+  if (lowercase === "space" || lowercase === "spacebar" || normalized === " ") {
+    return "Space";
+  }
+  if (lowercase === "esc" || lowercase === "escape") {
+    return "Escape";
+  }
+  if (lowercase === "enter" || lowercase === "return") {
+    return "Enter";
+  }
+  if (lowercase === "tab") {
+    return "Tab";
+  }
+  if (lowercase === "backspace") {
+    return "Backspace";
+  }
+  if (lowercase === "delete" || lowercase === "del") {
+    return "Delete";
+  }
+  if (lowercase === "up" || lowercase === "arrowup") {
+    return "ArrowUp";
+  }
+  if (lowercase === "down" || lowercase === "arrowdown") {
+    return "ArrowDown";
+  }
+  if (lowercase === "left" || lowercase === "arrowleft") {
+    return "ArrowLeft";
+  }
+  if (lowercase === "right" || lowercase === "arrowright") {
+    return "ArrowRight";
+  }
+  if (/^f\d{1,2}$/i.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+  if (normalized.length === 1) {
+    return /[a-z]/i.test(normalized) ? normalized.toUpperCase() : normalized;
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function composeHotkeyString({
+  useMod = false,
+  useCtrl = false,
+  useMeta = false,
+  useAlt = false,
+  useShift = false,
+  key = "",
+} = {}) {
+  const normalizedKey = normalizeHotkeyPrimaryKey(key);
+  if (!normalizedKey) {
+    return "";
+  }
+
+  const parts = [];
+  if (useMod) {
+    parts.push("Mod");
+  } else {
+    if (useCtrl) {
+      parts.push("Ctrl");
+    }
+    if (useMeta) {
+      parts.push("Meta");
+    }
+  }
+  if (useAlt) {
+    parts.push("Alt");
+  }
+  if (useShift) {
+    parts.push("Shift");
+  }
+  parts.push(normalizedKey);
+  return parts.join("+");
+}
+
+function normalizeStopHotkeySetting(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  const tokens = rawValue
+    .split("+")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) {
+    return "";
+  }
+
+  const key = normalizeHotkeyPrimaryKey(tokens[tokens.length - 1]);
+  if (!key || normalizeHotkeyModifierToken(key)) {
+    return "";
+  }
+
+  let useMod = false;
+  let useCtrl = false;
+  let useMeta = false;
+  let useAlt = false;
+  let useShift = false;
+
+  for (const token of tokens.slice(0, -1)) {
+    const modifier = normalizeHotkeyModifierToken(token);
+    if (!modifier) {
+      return "";
+    }
+    if (modifier === "Mod") {
+      useMod = true;
+      useCtrl = false;
+      useMeta = false;
+      continue;
+    }
+    if (useMod && (modifier === "Ctrl" || modifier === "Meta")) {
+      continue;
+    }
+    if (modifier === "Ctrl") {
+      useCtrl = true;
+    } else if (modifier === "Meta") {
+      useMeta = true;
+    } else if (modifier === "Alt") {
+      useAlt = true;
+    } else if (modifier === "Shift") {
+      useShift = true;
+    }
+  }
+
+  return composeHotkeyString({
+    useMod,
+    useCtrl,
+    useMeta,
+    useAlt,
+    useShift,
+    key,
+  });
+}
+
+function formatHotkeyForDisplay(value) {
+  const normalized = normalizeStopHotkeySetting(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const isMac = process.platform === "darwin";
+  return normalized
+    .split("+")
+    .map((part) => {
+      if (part === "Mod") {
+        return isMac ? "Cmd" : "Ctrl";
+      }
+      if (part === "Meta") {
+        return "Cmd";
+      }
+      if (part === "Alt") {
+        return isMac ? "Option" : "Alt";
+      }
+      return part;
+    })
+    .join("+");
+}
+
+function normalizeHotkeyFromEvent(event) {
+  const key = normalizeHotkeyPrimaryKey(event?.key);
+  if (!key || normalizeHotkeyModifierToken(key)) {
+    return "";
+  }
+
+  const isMac = process.platform === "darwin";
+  return composeHotkeyString({
+    useMod: isMac ? event.metaKey : event.ctrlKey,
+    useCtrl: isMac ? event.ctrlKey : false,
+    useMeta: !isMac && event.metaKey,
+    useAlt: event.altKey,
+    useShift: event.shiftKey,
+    key,
+  });
+}
+
+function hotkeyMatchesKeyboardEvent(configuredHotkey, event) {
+  const normalizedConfiguredHotkey = normalizeStopHotkeySetting(configuredHotkey);
+  if (!normalizedConfiguredHotkey) {
+    return false;
+  }
+  return normalizedConfiguredHotkey === normalizeHotkeyFromEvent(event);
+}
+
+function isHotkeyCaptureTarget(target) {
+  return Boolean(
+    target
+    && target.classList
+    && target.classList.contains(HOTKEY_CAPTURE_INPUT_CLASS)
+  );
 }
 
 function isPathInsideDirectory(candidatePath, directoryPath) {
@@ -483,6 +704,21 @@ function estimateCanvasTextNodeHeight(text, width = RESULT_NODE_DEFAULT_WIDTH) {
     .reduce((count, line) => count + Math.max(1, Math.ceil(Math.max(1, line.length) / charsPerLine)), 0);
 
   return clampNumber(88 + (visualLines * 22), RESULT_NODE_MIN_HEIGHT, RESULT_NODE_MAX_HEIGHT);
+}
+
+function getCanvasTextNodeAutoFitHeight(node) {
+  if (String(node?.type || "").trim() !== "text") {
+    return null;
+  }
+
+  const width = clampNumber(
+    toFiniteNumber(node?.width, RESULT_NODE_DEFAULT_WIDTH),
+    RESULT_NODE_MIN_WIDTH,
+    RESULT_NODE_MAX_WIDTH
+  );
+  const estimatedHeight = estimateCanvasTextNodeHeight(node?.text, width);
+  const existingHeight = toFiniteNumber(node?.height, 0);
+  return Math.max(estimatedHeight, existingHeight);
 }
 
 function compareCanvasNodeOrder(a, b) {
@@ -2261,6 +2497,9 @@ class OpenAgentView extends ItemView {
     this.activeSelectableMessageEl = null;
     this.isClampingMessageSelection = false;
     this.taskListHovered = false;
+    this.renderedActiveTaskId = "";
+    this.activeTaskStatusEl = null;
+    this.messagesSectionEl = null;
   }
 
   getViewType() {
@@ -2561,6 +2800,213 @@ class OpenAgentView extends ItemView {
     return compact || "Tool output";
   }
 
+  resetActiveTaskDomRefs() {
+    this.renderedActiveTaskId = "";
+    this.activeTaskStatusEl = null;
+    this.messagesSectionEl = null;
+  }
+
+  updateActiveTaskStatus(task) {
+    if (!this.activeTaskStatusEl?.isConnected) {
+      return;
+    }
+
+    const status = String(task?.status || "idle");
+    this.activeTaskStatusEl.className = `oa-status-tag${["running", "starting"].includes(status) ? " is-running" : ""}`;
+    this.activeTaskStatusEl.setText(status);
+  }
+
+  renderTaskMessages(messagesSection, activeTask, options = {}) {
+    if (!messagesSection) {
+      return;
+    }
+
+    const panelScrollState = options.panelScrollState || null;
+    const panelScrollKey = String(options.panelScrollKey || this.panelScrollKey || "");
+    const didSwitchActiveTask = options.didSwitchActiveTask === true;
+    const shouldAutoScrollToLatestUserMessage = this.shouldAutoScrollToLatestUserMessage(activeTask, {
+      didSwitchActiveTask,
+    });
+
+    messagesSection.empty();
+    const messages = Array.isArray(activeTask?.messages) ? activeTask.messages : [];
+    const messagesLoaded = this.plugin.taskHasLoadedMessages(activeTask);
+    const messageCount = Math.max(Number(activeTask?.messageCount) || 0, messages.length);
+    const renderSelectionImageBubble = () => {
+      const messageList = messagesSection.createDiv({ cls: "oa-message-list" });
+      this.plugin.renderSelectionImageMessage(messageList, activeTask?.selectionContext);
+      return messageList;
+    };
+
+    if (!messagesLoaded && messageCount > 0) {
+      renderSelectionImageBubble();
+      messagesSection.createDiv({
+        cls: "oa-muted",
+        text: `Loading conversation (${messageCount} messages)...`,
+      });
+      this.restorePanelScrollState(panelScrollState, panelScrollKey);
+      this.rememberRenderedTaskMessageState(activeTask);
+      return;
+    }
+
+    if (messages.length === 0) {
+      renderSelectionImageBubble();
+      messagesSection.createDiv({ cls: "oa-muted", text: "No conversation yet." });
+      this.restorePanelScrollState(panelScrollState, panelScrollKey);
+      this.rememberRenderedTaskMessageState(activeTask);
+      return;
+    }
+
+    const visibleMessageCount = this.syncVisibleMessageCount(activeTask.taskId, messages.length, {
+      reset: didSwitchActiveTask,
+    });
+    const firstVisibleIndex = Math.max(0, messages.length - visibleMessageCount);
+    const hiddenMessageCount = firstVisibleIndex;
+    const shouldInitialScrollToConversationEnd = this.shouldInitialScrollToConversationEnd(panelScrollKey);
+    let latestMessageEl = null;
+    let latestUserMessageEl = null;
+
+    if (hiddenMessageCount > 0) {
+      const pagination = messagesSection.createDiv({ cls: "oa-message-pagination" });
+      pagination.createDiv({
+        cls: "oa-message-pagination-summary",
+        text: `Showing ${visibleMessageCount} latest of ${messages.length} messages.`,
+      });
+      const paginationActions = pagination.createDiv({ cls: "oa-action-row oa-message-pagination-actions" });
+      const nextVisibleCount = Math.min(messages.length, visibleMessageCount + CHAT_MESSAGE_PAGE_SIZE);
+      const loadCount = nextVisibleCount - visibleMessageCount;
+      this.makeButton(
+        paginationActions,
+        `Show ${loadCount} earlier`,
+        () => this.showOlderMessages(activeTask.taskId, messages.length),
+        false,
+        { runOnMouseDown: true }
+      );
+    }
+
+    const messageList = renderSelectionImageBubble();
+    messages.slice(firstVisibleIndex).forEach((message, index) => {
+      const messageIndex = firstVisibleIndex + index;
+      const isToolMessage = this.isToolMessage(message);
+      const item = messageList.createDiv({
+        cls: `oa-message oa-chat-message oa-role-${message.role || "system"}${isToolMessage ? " oa-message-tool" : ""}`,
+      });
+      latestMessageEl = item;
+      if (isToolMessage) {
+        const messageKey = this.getMessageIdentity(message, messageIndex);
+        const expanded = this.expandedToolMessages.has(messageKey);
+        item.toggleClass("is-expanded", expanded);
+        item.toggleClass("is-collapsed", !expanded);
+
+        const toggle = item.createEl("button", {
+          cls: "oa-message-toggle",
+          attr: {
+            type: "button",
+            "aria-expanded": expanded ? "true" : "false",
+          },
+        });
+        const toggleText = toggle.createDiv({ cls: "oa-message-toggle-text" });
+        toggleText.createDiv({
+          cls: "oa-message-preview",
+          text: this.getToolMessagePreview(message.text),
+        });
+        toggle.createDiv({
+          cls: "oa-message-toggle-icon",
+          text: expanded ? "-" : "+",
+        });
+
+        const body = item.createDiv({
+          cls: "oa-message-text",
+          text: message.text || "",
+        });
+        this.bindMessageSelectionGuard(body);
+        body.toggleClass("is-hidden", !expanded);
+
+        toggle.addEventListener("click", () => {
+          if (this.expandedToolMessages.has(messageKey)) {
+            this.expandedToolMessages.delete(messageKey);
+            item.removeClass("is-expanded");
+            item.addClass("is-collapsed");
+            toggle.setAttribute("aria-expanded", "false");
+            body.addClass("is-hidden");
+            const icon = toggle.querySelector(".oa-message-toggle-icon");
+            if (icon) {
+              icon.textContent = "+";
+            }
+            return;
+          }
+
+          this.expandedToolMessages.add(messageKey);
+          item.removeClass("is-collapsed");
+          item.addClass("is-expanded");
+          toggle.setAttribute("aria-expanded", "true");
+          body.removeClass("is-hidden");
+          const icon = toggle.querySelector(".oa-message-toggle-icon");
+          if (icon) {
+            icon.textContent = "-";
+          }
+        });
+        return;
+      }
+
+      const body = item.createDiv({
+        cls: "oa-message-text",
+        text: message.text || "",
+      });
+      this.bindMessageSelectionGuard(body);
+      if (messageIndex === messages.length - 1 && String(message.role || "") === "user") {
+        latestUserMessageEl = item;
+      }
+    });
+
+    if (shouldInitialScrollToConversationEnd && latestMessageEl) {
+      this.consumeInitialPanelScroll(panelScrollKey);
+      this.scrollMessageIntoView(latestMessageEl, panelScrollKey);
+    } else if (shouldAutoScrollToLatestUserMessage && latestUserMessageEl) {
+      this.scrollMessageIntoView(latestUserMessageEl, panelScrollKey);
+    } else {
+      this.restorePanelScrollState(panelScrollState, panelScrollKey);
+    }
+
+    this.rememberRenderedTaskMessageState(activeTask);
+  }
+
+  tryApplyStreamingTaskUpdate(task) {
+    const normalizedTaskId = String(task?.taskId || "").trim();
+    if (!normalizedTaskId) {
+      return false;
+    }
+
+    if (this.plugin.getPanelTab() !== PANEL_TAB_OPTIONS.ACTIVE_TASK) {
+      return false;
+    }
+
+    const activeTask = this.plugin.getActiveTask();
+    if (normalizedTaskId !== String(activeTask?.taskId || "").trim()) {
+      return false;
+    }
+
+    if (normalizedTaskId !== String(this.renderedActiveTaskId || "").trim()) {
+      return false;
+    }
+
+    if (!this.messagesSectionEl?.isConnected || !this.activeTaskStatusEl?.isConnected) {
+      return false;
+    }
+
+    if (!this.plugin.isTaskRunning(task) || String(task?.lastError || "").trim()) {
+      return false;
+    }
+
+    const panelScrollState = this.capturePanelScrollState();
+    this.updateActiveTaskStatus(task);
+    this.renderTaskMessages(this.messagesSectionEl, task, {
+      panelScrollState,
+      panelScrollKey: this.panelScrollKey,
+    });
+    return true;
+  }
+
   getDefaultVisibleMessageCount(totalMessages) {
     return Math.min(Math.max(Number(totalMessages) || 0, 0), CHAT_MESSAGE_PAGE_SIZE);
   }
@@ -2833,6 +3279,7 @@ class OpenAgentView extends ItemView {
     const panelScrollState = this.capturePanelScrollState();
     const { contentEl: rootEl } = this;
     rootEl.empty();
+    this.resetActiveTaskDomRefs();
     rootEl.addClass("openagent-view");
     const activeCanvasPath = this.plugin.getActiveCanvasPath();
     const activeWorkspace = this.plugin.getActiveWorkspace();
@@ -2914,7 +3361,7 @@ class OpenAgentView extends ItemView {
     if (!isSettingsScreen && activeTask) {
       const headerConversation = header.createDiv({ cls: "oa-conversation-heading" });
       headerConversation.createDiv({ cls: "oa-detail-title", text: activeTask.title || "Untitled task" });
-      headerConversation.createDiv({
+      this.activeTaskStatusEl = headerConversation.createDiv({
         cls: `oa-status-tag${["running", "starting"].includes(String(activeTask.status || "")) ? " is-running" : ""}`,
         text: activeTask.status || "idle",
       });
@@ -3114,136 +3561,13 @@ class OpenAgentView extends ItemView {
     }
 
     const messagesSection = detail.createDiv({ cls: "oa-messages-section" });
-    const messages = Array.isArray(activeTask.messages) ? activeTask.messages : [];
-    const messagesLoaded = this.plugin.taskHasLoadedMessages(activeTask);
-    const messageCount = Math.max(Number(activeTask.messageCount) || 0, messages.length);
-    const renderSelectionImageBubble = () => {
-      const messageList = messagesSection.createDiv({ cls: "oa-message-list" });
-      this.plugin.renderSelectionImageMessage(messageList, activeTask.selectionContext);
-      return messageList;
-    };
-    if (!messagesLoaded && messageCount > 0) {
-      renderSelectionImageBubble();
-      messagesSection.createDiv({
-        cls: "oa-muted",
-        text: `Loading conversation (${messageCount} messages)...`,
-      });
-      this.restorePanelScrollState(panelScrollState, panelScrollKey);
-    } else if (messages.length === 0) {
-      renderSelectionImageBubble();
-      messagesSection.createDiv({ cls: "oa-muted", text: "No conversation yet." });
-      this.restorePanelScrollState(panelScrollState, panelScrollKey);
-    } else {
-      const visibleMessageCount = this.syncVisibleMessageCount(activeTask.taskId, messages.length, {
-        reset: didSwitchActiveTask,
-      });
-      const firstVisibleIndex = Math.max(0, messages.length - visibleMessageCount);
-      const hiddenMessageCount = firstVisibleIndex;
-      const shouldInitialScrollToConversationEnd = this.shouldInitialScrollToConversationEnd(panelScrollKey);
-      let latestMessageEl = null;
-      let latestUserMessageEl = null;
-      if (hiddenMessageCount > 0) {
-        const pagination = messagesSection.createDiv({ cls: "oa-message-pagination" });
-        pagination.createDiv({
-          cls: "oa-message-pagination-summary",
-          text: `Showing ${visibleMessageCount} latest of ${messages.length} messages.`,
-        });
-        const paginationActions = pagination.createDiv({ cls: "oa-action-row oa-message-pagination-actions" });
-        const nextVisibleCount = Math.min(messages.length, visibleMessageCount + CHAT_MESSAGE_PAGE_SIZE);
-        const loadCount = nextVisibleCount - visibleMessageCount;
-        this.makeButton(
-          paginationActions,
-          `Show ${loadCount} earlier`,
-          () => this.showOlderMessages(activeTask.taskId, messages.length),
-          false,
-          { runOnMouseDown: true }
-        );
-      }
-
-      const messageList = renderSelectionImageBubble();
-      messages.slice(firstVisibleIndex).forEach((message, index) => {
-        const messageIndex = firstVisibleIndex + index;
-        const isToolMessage = this.isToolMessage(message);
-        const item = messageList.createDiv({
-          cls: `oa-message oa-chat-message oa-role-${message.role || "system"}${isToolMessage ? " oa-message-tool" : ""}`,
-        });
-        latestMessageEl = item;
-        if (isToolMessage) {
-          const messageKey = this.getMessageIdentity(message, messageIndex);
-          const expanded = this.expandedToolMessages.has(messageKey);
-          item.toggleClass("is-expanded", expanded);
-          item.toggleClass("is-collapsed", !expanded);
-
-          const toggle = item.createEl("button", {
-            cls: "oa-message-toggle",
-            attr: {
-              type: "button",
-              "aria-expanded": expanded ? "true" : "false",
-            },
-          });
-          const toggleText = toggle.createDiv({ cls: "oa-message-toggle-text" });
-          toggleText.createDiv({
-            cls: "oa-message-preview",
-            text: this.getToolMessagePreview(message.text),
-          });
-          toggle.createDiv({
-            cls: "oa-message-toggle-icon",
-            text: expanded ? "-" : "+",
-          });
-
-          const body = item.createDiv({
-            cls: "oa-message-text",
-            text: message.text || "",
-          });
-          this.bindMessageSelectionGuard(body);
-          body.toggleClass("is-hidden", !expanded);
-
-          toggle.addEventListener("click", () => {
-            if (this.expandedToolMessages.has(messageKey)) {
-              this.expandedToolMessages.delete(messageKey);
-              item.removeClass("is-expanded");
-              item.addClass("is-collapsed");
-              toggle.setAttribute("aria-expanded", "false");
-              body.addClass("is-hidden");
-              const icon = toggle.querySelector(".oa-message-toggle-icon");
-              if (icon) {
-                icon.textContent = "+";
-              }
-              return;
-            }
-
-            this.expandedToolMessages.add(messageKey);
-            item.removeClass("is-collapsed");
-            item.addClass("is-expanded");
-            toggle.setAttribute("aria-expanded", "true");
-            body.removeClass("is-hidden");
-            const icon = toggle.querySelector(".oa-message-toggle-icon");
-            if (icon) {
-              icon.textContent = "-";
-            }
-          });
-          return;
-        }
-
-        const body = item.createDiv({
-          cls: "oa-message-text",
-          text: message.text || "",
-        });
-        this.bindMessageSelectionGuard(body);
-        if (messageIndex === messages.length - 1 && String(message.role || "") === "user") {
-          latestUserMessageEl = item;
-        }
-      });
-
-      if (shouldInitialScrollToConversationEnd && latestMessageEl) {
-        this.consumeInitialPanelScroll(panelScrollKey);
-        this.scrollMessageIntoView(latestMessageEl, panelScrollKey);
-      } else if (shouldAutoScrollToLatestUserMessage && latestUserMessageEl) {
-        this.scrollMessageIntoView(latestUserMessageEl, panelScrollKey);
-      } else {
-        this.restorePanelScrollState(panelScrollState, panelScrollKey);
-      }
-    }
+    this.messagesSectionEl = messagesSection;
+    this.renderedActiveTaskId = String(activeTask.taskId || "");
+    this.renderTaskMessages(messagesSection, activeTask, {
+      didSwitchActiveTask,
+      panelScrollState,
+      panelScrollKey,
+    });
 
     const composer = rootEl.createDiv({ cls: "oa-composer-section" });
     const composerInputShell = composer.createDiv({ cls: "oa-composer-input-shell" });
@@ -3275,13 +3599,15 @@ class OpenAgentView extends ItemView {
       }
     });
 
+    const stopActionTitle = this.plugin.getStopActiveTaskButtonTitle();
     const composerActionButton = composerInputShell.createEl("button", {
       cls: `oa-composer-action-button${canStopActiveTurn ? " is-stop" : " is-send"}`,
       text: canStopActiveTurn ? "Stop" : "↑",
       attr: {
         type: "button",
         "aria-label": canStopActiveTurn ? "Stop active task" : "Send message",
-        title: canStopActiveTurn ? "Stop" : "Send",
+        "aria-keyshortcuts": canStopActiveTurn ? this.plugin.getStopActiveTaskHotkey() : "",
+        title: canStopActiveTurn ? stopActionTitle : "Send",
       },
     });
     composerActionButton.disabled = !canStopActiveTurn && taskIsRunning;
@@ -3294,7 +3620,6 @@ class OpenAgentView extends ItemView {
     });
 
     this.restoreComposerFocusState(composerFocusState);
-    this.rememberRenderedTaskMessageState(activeTask);
   }
 
   makeButton(container, label, onClick, disabled = false, options = {}) {
@@ -3432,6 +3757,59 @@ class OpenAgentSettingTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl)
+      .setName("Stop active task hotkey")
+      .setDesc("Optional. Click the box, then press a shortcut like Mod+. or Mod+Shift+S to interrupt the current OpenAgent run. Backspace clears it.")
+      .addText((text) => {
+        text
+          .setPlaceholder("Click and press a shortcut")
+          .setValue(this.plugin.getStopActiveTaskHotkeyLabel());
+        text.inputEl.readOnly = true;
+        text.inputEl.classList.add(HOTKEY_CAPTURE_INPUT_CLASS);
+        text.inputEl.addEventListener("focus", () => {
+          text.inputEl.select();
+        });
+        text.inputEl.addEventListener("keydown", (event) => {
+          if (event.key === "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          if (event.isComposing || event.keyCode === 229) {
+            return;
+          }
+
+          if (event.key === "Backspace" || event.key === "Delete") {
+            this.plugin.settings.stopActiveTaskHotkey = "";
+            text.setValue("");
+            this.plugin.requestViewRefresh();
+            void this.plugin.persistPluginState();
+            return;
+          }
+
+          const nextHotkey = normalizeHotkeyFromEvent(event);
+          if (!nextHotkey) {
+            return;
+          }
+
+          this.plugin.settings.stopActiveTaskHotkey = nextHotkey;
+          text.setValue(this.plugin.getStopActiveTaskHotkeyLabel());
+          this.plugin.requestViewRefresh();
+          void this.plugin.persistPluginState();
+        });
+      })
+      .addButton((button) => {
+        button.setButtonText("Clear");
+        button.onClick(async () => {
+          this.plugin.settings.stopActiveTaskHotkey = "";
+          await this.plugin.persistPluginState();
+          this.plugin.requestViewRefresh();
+          this.display();
+        });
+      });
+
     if (this.plugin.getDaemonStatus().state !== DAEMON_CONNECTION_STATES.ONLINE) {
       new Setting(containerEl)
         .setName("Start server now")
@@ -3485,6 +3863,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       ...(savedState.settings || {}),
     };
     this.settings.daemonSandboxMode = normalizeDaemonSandboxMode(this.settings.daemonSandboxMode);
+    this.settings.stopActiveTaskHotkey = normalizeStopHotkeySetting(this.settings.stopActiveTaskHotkey);
     this.uiState = {
       activeTaskId: savedState.uiState?.activeTaskId ?? savedState.activeTaskId ?? null,
       panelTab: normalizePanelTab(savedState.uiState?.panelTab ?? savedState.panelTab),
@@ -3590,6 +3969,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
       void this.refreshSelectedGroupContextPreview();
       this.requestViewRefresh();
     }));
+    this.registerDomEvent(document, "keydown", (event) => {
+      void this.handleStopActiveTaskHotkey(event);
+    });
     const initialCanvasPath = this.getActiveCanvasPath();
     if (initialCanvasPath) {
       this.getCanvasSnapshotSync(initialCanvasPath);
@@ -5526,10 +5908,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
             stateChanged = true;
           }
 
-          if (!hasColor || currentColor !== RUNNING_CANVAS_NODE_COLOR) {
+          const autoFitHeight = getCanvasTextNodeAutoFitHeight(node);
+          const shouldResize = Number.isFinite(autoFitHeight) && autoFitHeight > toFiniteNumber(node?.height, 0);
+          if (!hasColor || currentColor !== RUNNING_CANVAS_NODE_COLOR || shouldResize) {
             nodes[index] = {
               ...node,
               color: RUNNING_CANVAS_NODE_COLOR,
+              ...(shouldResize ? { height: autoFitHeight } : {}),
             };
             nodesChanged = true;
           }
@@ -6393,6 +6778,19 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   requestViewRefresh(options = {}) {
     const force = options.force === true;
+    const streamTask = options.streamTask || null;
+    if (!force && streamTask) {
+      const patchedAnyView = this.app.workspace.getLeavesOfType(VIEW_TYPE).some((leaf) => {
+        return typeof leaf.view?.tryApplyStreamingTaskUpdate === "function"
+          && leaf.view.tryApplyStreamingTaskUpdate(streamTask);
+      });
+      if (patchedAnyView) {
+        this.pendingViewRefresh = false;
+        window.clearTimeout(this.viewRefreshTimer);
+        return;
+      }
+    }
+
     if (!force && (this.composerFocused || this.hasFocusedComposer() || this.taskListHovered || this.hasHoveredTaskList())) {
       this.pendingViewRefresh = true;
       window.clearTimeout(this.viewRefreshTimer);
@@ -6699,8 +7097,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
           if (payload?.task) {
             this.runtimeIssue = "";
-            this.mergeTask(payload.task);
-            this.requestViewRefresh();
+            const task = this.mergeTask(payload.task);
+            this.requestViewRefresh({ streamTask: task });
           }
         },
         onClose: () => {
@@ -7844,6 +8242,43 @@ module.exports = class OpenAgentPlugin extends Plugin {
       new Notice(this.runtimeIssue);
       this.requestViewRefresh();
     }
+  }
+
+  getStopActiveTaskHotkey() {
+    return normalizeStopHotkeySetting(this.settings?.stopActiveTaskHotkey);
+  }
+
+  getStopActiveTaskHotkeyLabel() {
+    return formatHotkeyForDisplay(this.getStopActiveTaskHotkey());
+  }
+
+  getStopActiveTaskButtonTitle() {
+    const hotkey = this.getStopActiveTaskHotkeyLabel();
+    return hotkey ? `Stop (${hotkey})` : "Stop";
+  }
+
+  async handleStopActiveTaskHotkey(event) {
+    if (!event || event.defaultPrevented || event.repeat) {
+      return;
+    }
+    if (event.isComposing || event.keyCode === 229) {
+      return;
+    }
+    if (isHotkeyCaptureTarget(event.target)) {
+      return;
+    }
+    if (!hotkeyMatchesKeyboardEvent(this.getStopActiveTaskHotkey(), event)) {
+      return;
+    }
+
+    const task = this.getActiveTask();
+    if (!task?.currentTurnId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    await this.stopActiveTask();
   }
 
   normalizeWorkingDirectoryInput(cwd) {
