@@ -1799,34 +1799,94 @@ class CanvasSelectionResolver {
     }
   }
 
-  async resolveCanvasSelection(file, selectedNodeIds, options = {}) {
-    const liveSelectedNodeDataById = options.liveNodeDataById instanceof Map
-      ? new Map(options.liveNodeDataById)
-      : new Map();
-    this.extractLiveSelectedNodeDataById(options.view, selectedNodeIds).forEach((nodeData, nodeId) => {
-      const previous = liveSelectedNodeDataById.get(nodeId) || {};
-      liveSelectedNodeDataById.set(nodeId, { ...previous, ...nodeData });
-    });
-    const raw = await this.app.vault.cachedRead(file);
-    let parsed;
+  getCanvasViewForFile(fileOrPath) {
+    const normalizedPath = typeof fileOrPath === "string"
+      ? String(fileOrPath || "").trim()
+      : String(fileOrPath?.path || "").trim();
+    if (!normalizedPath) {
+      return null;
+    }
+
+    const activeView = this.getActiveCanvasView();
+    if (String(activeView?.file?.path || "").trim() === normalizedPath) {
+      return activeView;
+    }
+
+    const canvasLeaves = this.app.workspace.getLeavesOfType("canvas");
+    for (const leaf of canvasLeaves) {
+      const view = leaf?.view;
+      if (String(view?.file?.path || "").trim() === normalizedPath) {
+        return view;
+      }
+    }
+
+    return null;
+  }
+
+  getCanvasRuntimeData(view) {
+    const canvas = view?.canvas;
+    if (!canvas) {
+      return null;
+    }
+
     try {
-      parsed = JSON.parse(raw);
+      const runtimeData = typeof canvas.getData === "function" ? canvas.getData() : canvas.data;
+      return runtimeData && typeof runtimeData === "object" ? runtimeData : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async readCanvasFileData(file) {
+    const raw = await this.app.vault.cachedRead(file);
+    try {
+      return JSON.parse(raw);
     } catch {
       throw new Error(`Unable to parse canvas JSON for ${file.path}`);
     }
+  }
+
+  async resolveCanvasSelection(file, selectedNodeIds, options = {}) {
+    const resolvedView = String(options.view?.file?.path || "").trim() === String(file?.path || "").trim()
+      ? options.view
+      : this.getCanvasViewForFile(file);
+    const liveSelectedNodeDataById = options.liveNodeDataById instanceof Map
+      ? new Map(options.liveNodeDataById)
+      : new Map();
+    this.extractLiveSelectedNodeDataById(resolvedView, selectedNodeIds).forEach((nodeData, nodeId) => {
+      const previous = liveSelectedNodeDataById.get(nodeId) || {};
+      liveSelectedNodeDataById.set(nodeId, { ...previous, ...nodeData });
+    });
 
     const selectedIdSet = new Set(selectedNodeIds.map((nodeId) => String(nodeId)));
-    const selectedNodes = Array.isArray(parsed.nodes)
-      ? parsed.nodes
-        .filter((node) => selectedIdSet.has(String(node.id)))
-        .map((node) => {
-          const liveNodeData = liveSelectedNodeDataById.get(String(node?.id || ""));
-          return liveNodeData ? { ...node, ...liveNodeData } : node;
-        })
-      : [];
+    const selectedNodesById = new Map();
+    const rememberSelectedNodes = (nodes) => {
+      (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+        const nodeId = String(node?.id || "").trim();
+        if (!nodeId || !selectedIdSet.has(nodeId) || selectedNodesById.has(nodeId)) {
+          return;
+        }
+        selectedNodesById.set(nodeId, node);
+      });
+    };
+
+    const runtimeData = this.getCanvasRuntimeData(resolvedView);
+    rememberSelectedNodes(runtimeData?.nodes);
+
+    if (selectedNodesById.size < selectedIdSet.size) {
+      const parsed = await this.readCanvasFileData(file);
+      rememberSelectedNodes(parsed?.nodes);
+    }
+
+    const selectedNodes = Array.from(selectedNodesById.values())
+      .map((node) => {
+        const liveNodeData = liveSelectedNodeDataById.get(String(node?.id || ""));
+        return liveNodeData ? { ...node, ...liveNodeData } : node;
+      })
+      .sort(compareCanvasNodeOrder);
 
     if (selectedNodes.length === 0) {
-      throw new Error("The saved Canvas file does not contain the current selection.");
+      throw new Error("The Canvas does not contain the current selection.");
     }
 
     const textBlocks = [];
@@ -2056,17 +2116,31 @@ class CanvasSelectionResolver {
       return selection;
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(await this.app.vault.cachedRead(abstractFile));
-    } catch {
-      return selection;
+    const resolvedView = this.getCanvasViewForFile(canvasPath);
+    let parsed = this.getCanvasRuntimeData(resolvedView);
+    if (!parsed || !Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) {
+      try {
+        parsed = await this.readCanvasFileData(abstractFile);
+      } catch {
+        return selection;
+      }
     }
 
     const nodes = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
     const sourceNodeId = nodeIds[0];
     const sourceNode = nodes.find((node) => String(node?.id || "") === sourceNodeId) || null;
-    if (!sourceNode || String(sourceNode?.type || "") !== "text") {
+    if ((!sourceNode || String(sourceNode?.type || "") !== "text") && parsed !== null) {
+      try {
+        const diskParsed = await this.readCanvasFileData(abstractFile);
+        parsed = diskParsed;
+      } catch {
+        return selection;
+      }
+    }
+
+    const effectiveNodes = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
+    const effectiveSourceNode = effectiveNodes.find((node) => String(node?.id || "") === sourceNodeId) || null;
+    if (!effectiveSourceNode || String(effectiveSourceNode?.type || "") !== "text") {
       return selection;
     }
 
@@ -2080,7 +2154,7 @@ class CanvasSelectionResolver {
     ].filter(Boolean));
     const connectedNodeIds = this.collectConnectedCanvasNodeIds(edges, sourceNodeId);
     await this.appendImplicitCanvasFiles(
-      nodes,
+      effectiveNodes,
       nextWarnings,
       implicitMarkdownFiles,
       implicitImageFiles,
@@ -2088,10 +2162,10 @@ class CanvasSelectionResolver {
       (node) => connectedNodeIds.has(String(node?.id || "").trim())
     );
 
-    const containingGroup = this.findSmallestCanvasGroupForNode(nodes, sourceNode);
+    const containingGroup = this.findSmallestCanvasGroupForNode(effectiveNodes, effectiveSourceNode);
     if (containingGroup) {
       await this.appendImplicitCanvasFiles(
-        nodes,
+        effectiveNodes,
         nextWarnings,
         implicitMarkdownFiles,
         implicitImageFiles,
