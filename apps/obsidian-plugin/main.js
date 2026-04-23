@@ -3615,28 +3615,6 @@ class OpenAgentView extends ItemView {
       detail.addClass("is-empty-state");
       if (selectedGroupContextPreview) {
         this.renderGroupContextPreview(detail, selectedGroupContextPreview);
-      } else {
-        const emptyStateCard = detail.createDiv({ cls: "oa-empty-state-card" });
-        const emptyStateTitle = activeCanvasPath
-          ? "Select a canvas node and start a conversation."
-          : "Open a canvas to start";
-        const emptyStateCopy = activeCanvasPath
-          ? ""
-          : "Open a Canvas and select a node to start a conversation.";
-        emptyStateCard.createDiv({
-          cls: "oa-empty-state-title",
-          text: emptyStateTitle,
-        });
-        if (emptyStateCopy) {
-          emptyStateCard.createDiv({
-            cls: "oa-muted oa-empty-state-copy",
-            text: emptyStateCopy,
-          });
-        }
-        const emptyActions = emptyStateCard.createDiv({ cls: "oa-action-row oa-empty-state-actions" });
-        this.makeButton(emptyActions, "New conversation", () => this.plugin.handleNewThreadFromSelectionCommand(), false, {
-          runOnMouseDown: true,
-        });
       }
       const emptyStateTasks = tasks.length > 0 ? tasks : archivedTasks;
       if (emptyStateTasks.length > 0) {
