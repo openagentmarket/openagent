@@ -706,6 +706,18 @@ function normalizeCanvasRunSourceRefState(value) {
   );
 }
 
+function normalizeUnreadTaskState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([taskId, unread]) => [String(taskId || "").trim(), unread === true])
+      .filter(([taskId, unread]) => taskId && unread)
+  );
+}
+
 function clampNumber(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -3199,6 +3211,14 @@ class OpenAgentView extends ItemView {
           cls: "oa-status-tag is-running",
           text: task.status || "running",
         });
+      } else if (this.plugin.hasUnreadTask(task.taskId)) {
+        itemHeader.createDiv({
+          cls: "oa-thread-list-unread-dot",
+          attr: {
+            "aria-label": "Unread result",
+            title: "Unread result",
+          },
+        });
       } else {
         itemHeader.createDiv({
           cls: "oa-thread-list-arrow",
@@ -3896,6 +3916,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
       panelTab: normalizePanelTab(savedState.uiState?.panelTab ?? savedState.panelTab),
       draftsByTaskId: savedState.uiState?.draftsByTaskId ?? savedState.draftsByTaskId ?? {},
       canvasNodeHighlightStateByKey: savedState.uiState?.canvasNodeHighlightStateByKey ?? {},
+      unreadTaskStateById: normalizeUnreadTaskState(
+        savedState.uiState?.unreadTaskStateById
+        ?? savedState.unreadTaskStateById
+        ?? {}
+      ),
     };
     const savedSyncState = savedState.syncState || {};
     this.daemonLauncher = new OpenAgentDaemonLauncher(this);
@@ -3994,7 +4019,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       if (activeCanvasPath) {
         this.getCanvasSnapshotSync(activeCanvasPath);
       }
-      this.syncActiveTaskToCanvasContext();
+      this.syncActiveTaskToCanvasContext({ markReadOnSelection: true });
       void this.refreshSelectedGroupContextPreview();
       this.requestViewRefresh();
     }));
@@ -5593,6 +5618,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
   async handleCreateFollowUpNodeCommand() {
     try {
       const result = await this.createFollowUpNodeFromSelection();
+      await this.revealCanvasNodeForEditing(result.canvasPath, result.followUpNodeId);
       this.runtimeIssue = "";
       this.rememberSelectionSnapshot({
         canvasPath: result.canvasPath,
@@ -5604,7 +5630,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         anchorNodeId: result.anchorNodeId,
         followUpNodeId: result.followUpNodeId,
       });
-      new Notice("Created a follow-up node. Select it, type your next request, then run OpenAgent: New thread from selection.");
+      new Notice("Created a follow-up node. Start typing, then run OpenAgent: New thread from selection.");
     } catch (error) {
       this.runtimeIssue = String(error?.message || error);
       await this.appendDebugEvent("canvas_follow_up_node_error", {
@@ -5847,6 +5873,70 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return this.getFilteredTasksByArchiveState({ archived: true, archiveProbeCache });
   }
 
+  hasUnreadTask(taskId) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId) {
+      return false;
+    }
+
+    return Boolean(this.uiState?.unreadTaskStateById?.[normalizedTaskId]);
+  }
+
+  updateTaskUnreadState(taskId, unread) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId) {
+      return false;
+    }
+
+    const currentState = normalizeUnreadTaskState(this.uiState?.unreadTaskStateById);
+    const hasUnread = Boolean(currentState[normalizedTaskId]);
+    if (unread) {
+      if (hasUnread) {
+        return false;
+      }
+      currentState[normalizedTaskId] = true;
+    } else {
+      if (!hasUnread) {
+        return false;
+      }
+      delete currentState[normalizedTaskId];
+    }
+
+    this.uiState.unreadTaskStateById = currentState;
+    return true;
+  }
+
+  setTaskUnreadState(taskId, unread, options = {}) {
+    const changed = this.updateTaskUnreadState(taskId, unread);
+    if (!changed) {
+      return false;
+    }
+
+    if (options.persist !== false) {
+      void this.persistPluginState();
+    }
+    if (options.refresh !== false) {
+      this.requestViewRefresh();
+    }
+    return true;
+  }
+
+  pruneUnreadTaskState() {
+    const currentState = normalizeUnreadTaskState(this.uiState?.unreadTaskStateById);
+    const taskIds = new Set(Object.keys(this.tasksById));
+    let changed = false;
+
+    Object.keys(currentState).forEach((taskId) => {
+      if (!taskIds.has(taskId)) {
+        delete currentState[taskId];
+        changed = true;
+      }
+    });
+
+    this.uiState.unreadTaskStateById = currentState;
+    return changed;
+  }
+
   getRunningTasks() {
     const activeCanvasPath = this.getActiveCanvasPath();
     return this.getTasks().filter((task) => {
@@ -5920,6 +6010,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   isTaskRunning(task) {
     return Boolean(task?.currentTurnId) || ["starting", "running"].includes(String(task?.status || ""));
+  }
+
+  shouldMarkTaskUnread(previousTask, nextTask) {
+    if (!previousTask || !nextTask?.taskId) {
+      return false;
+    }
+
+    return this.isTaskRunning(previousTask) && !this.isTaskRunning(nextTask);
   }
 
   maybeSyncCanvasNodeHighlights(task, previousTask) {
@@ -6192,6 +6290,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
     const previousTask = this.tasksById[task.taskId] || null;
     const nextTask = this.normalizeTaskForStore(task, previousTask);
     this.tasksById[nextTask.taskId] = nextTask;
+    const didMarkUnread = this.shouldMarkTaskUnread(previousTask, nextTask)
+      && this.updateTaskUnreadState(nextTask.taskId, true);
+    if (didMarkUnread) {
+      void this.persistPluginState();
+    }
     this.syncActiveTaskToCanvasContext();
     this.maybeSyncCanvasNodeHighlights(nextTask, previousTask);
     this.maybeSyncTaskResultNode(nextTask, previousTask);
@@ -6798,6 +6901,139 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return true;
   }
 
+  getCanvasNodeElement(view, nodeId) {
+    const normalizedNodeId = String(nodeId || "").trim();
+    if (!normalizedNodeId) {
+      return null;
+    }
+
+    const selector = `[data-node-id="${escapeAttributeSelectorValue(normalizedNodeId)}"]`;
+    return view?.containerEl?.querySelector?.(selector) || null;
+  }
+
+  getEditableCanvasNodeElement(view, nodeId) {
+    const nodeEl = this.getCanvasNodeElement(view, nodeId);
+    if (!nodeEl) {
+      return null;
+    }
+
+    return nodeEl.querySelector?.("textarea, input, [contenteditable='true'], .cm-content")
+      || nodeEl;
+  }
+
+  focusEditableCanvasNodeElement(element) {
+    if (!element || typeof element.focus !== "function") {
+      return false;
+    }
+
+    try {
+      element.focus();
+    } catch {
+      return false;
+    }
+
+    if (typeof element.setSelectionRange === "function" && typeof element.value === "string") {
+      try {
+        const offset = element.value.length;
+        element.setSelectionRange(offset, offset);
+      } catch {
+        // Ignore selection placement failures on unsupported inputs.
+      }
+    }
+
+    return true;
+  }
+
+  getRuntimeEditableCanvasNodeElement(runtimeNode) {
+    if (!runtimeNode || typeof runtimeNode !== "object") {
+      return null;
+    }
+
+    const directEditor = runtimeNode?.child?.editMode?.cm?.dom;
+    if (directEditor instanceof HTMLElement) {
+      return directEditor.querySelector?.(".cm-content") || directEditor;
+    }
+
+    return null;
+  }
+
+  async enterCanvasNodeEditModeInView(view, nodeId) {
+    const normalizedNodeId = String(nodeId || "").trim();
+    if (!view?.canvas || !normalizedNodeId) {
+      return false;
+    }
+
+    let runtimeNode = this.findCanvasRuntimeNodeById(view.canvas, normalizedNodeId);
+    this.selectCanvasNodeInView(view, normalizedNodeId, runtimeNode);
+    const tryStartEditing = () => {
+      runtimeNode = this.findCanvasRuntimeNodeById(view.canvas, normalizedNodeId) || runtimeNode;
+      if (typeof runtimeNode?.startEditing === "function") {
+        try {
+          runtimeNode.startEditing();
+          return true;
+        } catch {
+          // Fall through to older edit-mode shims below.
+        }
+      }
+
+      if (typeof runtimeNode?.setIsEditing === "function") {
+        try {
+          runtimeNode.setIsEditing(true);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      return false;
+    };
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        await sleep(attempt === 1 ? 0 : 50);
+      }
+
+      tryStartEditing();
+      const runtimeEditableElement = this.getRuntimeEditableCanvasNodeElement(runtimeNode);
+      if (this.resolver.isEditableCanvasElement(runtimeEditableElement) && this.focusEditableCanvasNodeElement(runtimeEditableElement)) {
+        return true;
+      }
+
+      if (typeof runtimeNode?.focus === "function") {
+        try {
+          runtimeNode.focus();
+        } catch {
+          // Ignore runtime focus failures and continue to DOM fallbacks.
+        }
+      }
+
+      const editableElement = this.getEditableCanvasNodeElement(view, normalizedNodeId);
+      if (this.resolver.isEditableCanvasElement(editableElement) && this.focusEditableCanvasNodeElement(editableElement)) {
+        return true;
+      }
+
+      const nodeEl = this.getCanvasNodeElement(view, normalizedNodeId);
+      if (!nodeEl) {
+        continue;
+      }
+
+      const interactionTarget = nodeEl.querySelector?.(".canvas-node-content, .canvas-node-container")
+        || nodeEl;
+      try {
+        interactionTarget.dispatchEvent(new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          detail: 2,
+        }));
+      } catch {
+        // Ignore DOM interaction failures on older runtimes.
+      }
+    }
+
+    return false;
+  }
+
   focusCanvasNodeInView(view, canvasPath, nodeId) {
     const normalizedCanvasPath = String(canvasPath || "").trim();
     const normalizedNodeId = String(nodeId || "").trim();
@@ -6855,6 +7091,25 @@ module.exports = class OpenAgentPlugin extends Plugin {
         : this.resolver.getActiveCanvasView();
       const viewCanvasPath = String(view?.file?.path || "").trim();
       if (viewCanvasPath === normalizedCanvasPath && this.focusCanvasNodeInView(view, normalizedCanvasPath, normalizedNodeId)) {
+        return true;
+      }
+
+      await sleep(attempt === 0 ? 0 : 50);
+    }
+
+    return false;
+  }
+
+  async revealCanvasNodeForEditing(canvasPath, nodeId) {
+    const didReveal = await this.revealCanvasNode(canvasPath, nodeId);
+    if (!didReveal) {
+      return false;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const view = this.findCanvasLeafByPath(canvasPath)?.view || this.resolver.getActiveCanvasView();
+      const viewCanvasPath = String(view?.file?.path || "").trim();
+      if (viewCanvasPath === String(canvasPath || "").trim() && await this.enterCanvasNodeEditModeInView(view, nodeId)) {
         return true;
       }
 
@@ -7037,6 +7292,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       }
 
       this.tasksById = nextTasksById;
+      this.pruneUnreadTaskState();
       this.syncActiveTaskToCanvasContext();
       Object.values(this.tasksById).forEach((task) => {
         const previousTask = previousTasksById[task.taskId] || null;
@@ -7346,14 +7602,18 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   async setActiveTask(taskId, options = {}) {
-    this.uiState.activeTaskId = taskId;
+    const normalizedTaskId = String(taskId || "").trim() || null;
+    this.uiState.activeTaskId = normalizedTaskId;
+    if (normalizedTaskId && options.markRead !== false) {
+      this.updateTaskUnreadState(normalizedTaskId, false);
+    }
     if (options.revealInActiveTab) {
       this.uiState.panelTab = PANEL_TAB_OPTIONS.ACTIVE_TASK;
     }
     await this.persistPluginState();
-    this.subscribeToTask(taskId);
+    this.subscribeToTask(normalizedTaskId);
     this.requestViewRefresh();
-    void this.hydrateTaskDetails(taskId, { force: true });
+    void this.hydrateTaskDetails(normalizedTaskId, { force: true });
   }
 
   async handleNewThreadFromSelectionCommand() {
@@ -7560,7 +7820,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       );
       this.lastCanvasSelectionSnapshot = nextSnapshot;
       if (!selectionUnchanged) {
-        this.syncActiveTaskToCanvasContext();
+        this.syncActiveTaskToCanvasContext({ markReadOnSelection: true });
         void this.refreshSelectedGroupContextPreview({ snapshot: nextSnapshot, force: true });
         this.requestViewRefresh();
       }
@@ -8320,7 +8580,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return nodeIds.length === 0;
   }
 
-  syncActiveTaskToCanvasContext() {
+  syncActiveTaskToCanvasContext(options = {}) {
     const activeCanvasPath = this.getActiveCanvasPath();
     if (!activeCanvasPath) {
       return;
@@ -8358,11 +8618,20 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     const nextTaskId = nextTask?.taskId || null;
+    const shouldMarkRead = options.markReadOnSelection === true
+      && nextTaskId
+      && this.hasUnreadTask(nextTaskId);
     if (nextTaskId === this.uiState.activeTaskId) {
+      if (shouldMarkRead) {
+        this.setTaskUnreadState(nextTaskId, false);
+      }
       return;
     }
 
     this.uiState.activeTaskId = nextTaskId;
+    if (shouldMarkRead) {
+      this.updateTaskUnreadState(nextTaskId, false);
+    }
     this.persistPluginState();
     if (nextTaskId) {
       this.subscribeToTask(nextTaskId);
