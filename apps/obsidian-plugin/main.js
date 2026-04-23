@@ -39,6 +39,7 @@ const WORKSPACE_CONFIG_FILE_NAME = "workspace.json";
 const DEFAULT_WORKSPACE_CANVAS_FILE = "Main.canvas";
 const WORKSPACE_INDEX_WAIT_MS = 4_000;
 const WORKSPACE_INDEX_POLL_MS = 100;
+const CANVAS_RUN_SETTLE_DELAY_MS = 250;
 const DAEMON_SANDBOX_MODE_OPTIONS = Object.freeze({
   WORKSPACE_WRITE: "workspace-write",
   DANGER_FULL_ACCESS: "danger-full-access",
@@ -1726,6 +1727,7 @@ class CanvasSelectionResolver {
 
     const liveNodeDataById = this.extractLiveSelectedNodeDataById(view, selectedNodeIds);
     await this.flushPendingCanvasEdits(view);
+    await sleep(CANVAS_RUN_SETTLE_DELAY_MS);
 
     return this.resolveCanvasSelection(file, selectedNodeIds, { view, liveNodeDataById });
   }
@@ -4109,6 +4111,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "openagent-open-thread-list",
+      name: "Open thread list",
+      callback: () => {
+        void this.openThreadList();
+      },
+    });
+
+    this.addCommand({
       id: "openagent-resume-last-task",
       name: "Resume last task",
       callback: () => this.resumeLastTask(),
@@ -5682,7 +5692,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
         anchorNodeId: result.anchorNodeId,
         followUpNodeId: result.followUpNodeId,
       });
-      new Notice("Created a follow-up node. Start typing, then run OpenAgent: New thread from selection.");
     } catch (error) {
       this.runtimeIssue = String(error?.message || error);
       await this.appendDebugEvent("canvas_follow_up_node_error", {
@@ -6762,6 +6771,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.app.workspace.revealLeaf(leaf);
     this.requestViewRefresh();
+  }
+
+  async openThreadList() {
+    await this.activateView();
+    await this.setPanelTab(PANEL_TAB_OPTIONS.WORKSPACE_SETTINGS);
   }
 
   getTaskJumpNodeRef(task) {
