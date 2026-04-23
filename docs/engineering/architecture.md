@@ -59,7 +59,7 @@ Key classes in that file:
 - `OpenAgentSettingTab`
   Exposes plugin settings inside Obsidian.
 - `OpenAgentPlugin`
-  Wires lifecycle, commands, background polling, and file event handling together.
+  Wires lifecycle, commands, canvas selection hooks, and file event handling together.
 
 ### Daemon
 

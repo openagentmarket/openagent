@@ -31,6 +31,7 @@ The current model favors:
 
 - realtime updates for the active conversation
 - no interval-based task polling in the background
+- event-driven canvas selection tracking
 - explicit manual refresh for non-active threads
 
 ## Canonical Data Flow

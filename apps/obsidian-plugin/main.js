@@ -14,6 +14,8 @@ const {
   Plugin,
   PluginSettingTab,
   Setting,
+  setIcon,
+  setTooltip,
   TextComponent,
   TFile,
 } = require("obsidian");
@@ -42,7 +44,6 @@ const DAEMON_SANDBOX_MODE_OPTIONS = Object.freeze({
   DANGER_FULL_ACCESS: "danger-full-access",
 });
 const RECENT_SELECTION_TTL_MS = 15_000;
-const SELECTION_SNAPSHOT_POLL_MS = 250;
 const DEV_SMOKE_REQUEST_RELATIVE_PATH = path.join(".openagent", "smoke-request.json");
 const DEV_SMOKE_RESULT_RELATIVE_PATH = path.join(".openagent", "smoke-result.json");
 const DEBUG_LOG_RELATIVE_PATH = path.join(".openagent", "new-thread-debug.jsonl");
@@ -67,6 +68,8 @@ const CANVAS_LAYOUT_MIN_WIDTH = 260;
 const CANVAS_LAYOUT_MIN_HEIGHT = 120;
 const RUNNING_CANVAS_NODE_COLOR = "3";
 const COMPLETED_CANVAS_NODE_COLOR = "#086ddd";
+const CANVAS_NEW_THREAD_BUTTON_ID = "oa-canvas-new-thread-button";
+const CANVAS_FOLLOW_UP_NODE_BUTTON_ID = "oa-canvas-follow-up-node-button";
 const AUTO_RUN_TRIGGER_CANVAS_NODE_COLORS = Object.freeze([
   "4",
   "#22c55e",
@@ -90,9 +93,33 @@ const DAEMON_CONNECTION_STATES = Object.freeze({
   OFFLINE: "offline",
 });
 const HOTKEY_CAPTURE_INPUT_CLASS = "oa-hotkey-capture-input";
+const CANVAS_SELECTION_TRACKING_PATCH_SYMBOL = Symbol("openagentCanvasSelectionTrackingPatch");
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function patchObjectMethod(target, methodName, wrap) {
+  if (!target || typeof target !== "object") {
+    return null;
+  }
+
+  const original = target[methodName];
+  if (typeof original !== "function" || typeof wrap !== "function") {
+    return null;
+  }
+
+  const wrapped = wrap(original);
+  if (typeof wrapped !== "function" || wrapped === original) {
+    return null;
+  }
+
+  target[methodName] = wrapped;
+  return () => {
+    if (target[methodName] === wrapped) {
+      target[methodName] = original;
+    }
+  };
 }
 
 function shellEscape(value) {
@@ -3879,6 +3906,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.runtimeIssue = "";
     this.tasksById = {};
     this.viewRefreshTimer = null;
+    this.canvasSelectionCaptureTimer = null;
     this.activeStreamDisposer = null;
     this.activeStreamReconnectTimer = null;
     this.activeStreamTaskId = "";
@@ -3911,6 +3939,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     );
     this.canvasSnapshotCacheByPath = new Map();
     this.canvasMutationQueueByPath = new Map();
+    this.canvasPopupMenuPatchStateByMenu = new Map();
     this.canvasNodeHighlightSyncInFlight = new Set();
     this.canvasNodeHighlightSyncPending = new Set();
     this.canvasAutoRunInFlightByKey = new Set();
@@ -3931,9 +3960,6 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new OpenAgentView(leaf, this));
     this.settingTab = new OpenAgentSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
-    this.registerInterval(window.setInterval(() => {
-      this.captureCanvasSelectionSnapshot();
-    }, SELECTION_SNAPSHOT_POLL_MS));
     this.configureDevSmokePolling();
     this.registerInterval(window.setInterval(() => {
       void this.refreshDaemonStatus({
@@ -3961,6 +3987,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
       this.handleCanvasFileMutation(file);
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      this.ensureCanvasPopupMenuPatches();
+      this.ensureCanvasSelectionTrackingPatches();
+      this.captureCanvasSelectionSnapshot();
       const activeCanvasPath = this.getActiveCanvasPath();
       if (activeCanvasPath) {
         this.getCanvasSnapshotSync(activeCanvasPath);
@@ -3969,6 +3998,10 @@ module.exports = class OpenAgentPlugin extends Plugin {
       void this.refreshSelectedGroupContextPreview();
       this.requestViewRefresh();
     }));
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.ensureCanvasPopupMenuPatches();
+      this.ensureCanvasSelectionTrackingPatches();
+    }));
     this.registerDomEvent(document, "keydown", (event) => {
       void this.handleStopActiveTaskHotkey(event);
     });
@@ -3976,6 +4009,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     if (initialCanvasPath) {
       this.getCanvasSnapshotSync(initialCanvasPath);
     }
+    this.ensureCanvasPopupMenuPatches();
+    this.ensureCanvasSelectionTrackingPatches();
+    this.captureCanvasSelectionSnapshot();
 
     this.addCommand({
       id: "openagent-new-thread-from-selection",
@@ -4030,6 +4066,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
 
     this.app.workspace.onLayoutReady(() => {
+      this.ensureCanvasPopupMenuPatches();
+      this.ensureCanvasSelectionTrackingPatches();
+      this.captureCanvasSelectionSnapshot();
       void this.ensurePanelVisibleOnStartup();
     });
     void this.ensureWorkspaceSummariesLoaded();
@@ -4039,8 +4078,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   async onunload() {
+    window.clearTimeout(this.canvasSelectionCaptureTimer);
+    this.canvasSelectionCaptureTimer = null;
     this.disposeActiveStream();
     this.disposeAllRunningTaskStreams();
+    this.restoreCanvasPopupMenuPatches();
     try {
       await this.persistPluginState();
     } catch {
@@ -4058,6 +4100,171 @@ module.exports = class OpenAgentPlugin extends Plugin {
         canvasRunSourceRefByTaskId: this.canvasRunSourceRefByTaskId,
       },
     });
+  }
+
+  ensureCanvasPopupMenuPatches() {
+    this.app.workspace.getLeavesOfType("canvas").forEach((leaf) => {
+      this.ensureCanvasPopupMenuPatched(leaf?.view);
+    });
+  }
+
+  ensureCanvasSelectionTrackingPatches() {
+    this.app.workspace.getLeavesOfType("canvas").forEach((leaf) => {
+      this.ensureCanvasSelectionTrackingPatched(leaf?.view);
+    });
+  }
+
+  ensureCanvasSelectionTrackingPatched(view) {
+    const canvas = view?.canvas;
+    if (!canvas || typeof canvas !== "object") {
+      return false;
+    }
+
+    if (canvas[CANVAS_SELECTION_TRACKING_PATCH_SYMBOL]) {
+      return true;
+    }
+
+    const unpatches = [];
+    const scheduleCapture = () => {
+      this.scheduleCanvasSelectionSnapshotCapture(view);
+    };
+    const patchTargetMethod = (target, methodName) => {
+      const unpatch = patchObjectMethod(target, methodName, (original) => {
+        return function patchedCanvasSelectionMethod(...args) {
+          const result = original.apply(this, args);
+          scheduleCapture();
+          return result;
+        };
+      });
+      if (!unpatch) {
+        return false;
+      }
+
+      unpatches.push(unpatch);
+      return true;
+    };
+
+    let patched = false;
+    [
+      [canvas, "updateSelection"],
+      [canvas, "selectOnly"],
+      [canvas, "deselectAll"],
+      [canvas?.selectionManager, "updateSelection"],
+      [canvas?.selectionManager, "select"],
+      [canvas?.selectionManager, "selectOnly"],
+      [canvas?.selectionManager, "deselectAll"],
+      [canvas?.selectionManager, "clear"],
+      [canvas?.selectionManager, "setSelection"],
+    ].forEach(([target, methodName]) => {
+      patched = patchTargetMethod(target, methodName) || patched;
+    });
+
+    if (!patched) {
+      return false;
+    }
+
+    const cleanup = () => {
+      unpatches.splice(0).reverse().forEach((unpatch) => {
+        try {
+          unpatch();
+        } catch {
+          // Ignore cleanup failures during plugin unload or hot reload.
+        }
+      });
+      delete canvas[CANVAS_SELECTION_TRACKING_PATCH_SYMBOL];
+    };
+
+    canvas[CANVAS_SELECTION_TRACKING_PATCH_SYMBOL] = true;
+    this.register(cleanup);
+    return true;
+  }
+
+  ensureCanvasPopupMenuPatched(view) {
+    const menu = view?.canvas?.menu;
+    if (!menu || typeof menu.render !== "function") {
+      return false;
+    }
+
+    if (this.canvasPopupMenuPatchStateByMenu.has(menu)) {
+      this.syncCanvasPopupActionButtons(view);
+      return true;
+    }
+
+    const originalRender = menu.render.bind(menu);
+    menu.render = (...args) => {
+      const result = originalRender(...args);
+      queueMicrotask(() => {
+        this.syncCanvasPopupActionButtons(view);
+      });
+      return result;
+    };
+
+    this.canvasPopupMenuPatchStateByMenu.set(menu, originalRender);
+    this.syncCanvasPopupActionButtons(view);
+    return true;
+  }
+
+  restoreCanvasPopupMenuPatches() {
+    this.canvasPopupMenuPatchStateByMenu.forEach((originalRender, menu) => {
+      if (menu && typeof originalRender === "function") {
+        menu.render = originalRender;
+      }
+    });
+    this.canvasPopupMenuPatchStateByMenu.clear();
+  }
+
+  syncCanvasPopupActionButtons(view) {
+    const menuEl = view?.canvas?.menu?.menuEl;
+    if (!menuEl) {
+      return false;
+    }
+
+    const selectedNodeIds = this.resolver.extractSelectedNodeIds(view);
+    const shouldShow = selectedNodeIds.length === 1;
+    const existingNewThreadButton = menuEl.querySelector(`#${CANVAS_NEW_THREAD_BUTTON_ID}`);
+    const existingFollowUpButton = menuEl.querySelector(`#${CANVAS_FOLLOW_UP_NODE_BUTTON_ID}`);
+
+    if (!shouldShow) {
+      existingNewThreadButton?.remove();
+      existingFollowUpButton?.remove();
+      return false;
+    }
+
+    if (!existingNewThreadButton) {
+      const newThreadButton = document.createElement("button");
+      newThreadButton.id = CANVAS_NEW_THREAD_BUTTON_ID;
+      newThreadButton.classList.add("clickable-icon");
+      newThreadButton.setAttribute("type", "button");
+      newThreadButton.setAttribute("aria-label", "New thread");
+      setIcon(newThreadButton, "play");
+      setTooltip(newThreadButton, "New thread", { placement: "top" });
+      newThreadButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.handleNewThreadFromSelectionCommand();
+      });
+
+      menuEl.appendChild(newThreadButton);
+    }
+
+    if (!existingFollowUpButton) {
+      const followUpButton = document.createElement("button");
+      followUpButton.id = CANVAS_FOLLOW_UP_NODE_BUTTON_ID;
+      followUpButton.classList.add("clickable-icon");
+      followUpButton.setAttribute("type", "button");
+      followUpButton.setAttribute("aria-label", "Create follow-up node");
+      setIcon(followUpButton, "message-square");
+      setTooltip(followUpButton, "Create follow-up node", { placement: "top" });
+      followUpButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.handleCreateFollowUpNodeCommand();
+      });
+
+      menuEl.appendChild(followUpButton);
+    }
+
+    return true;
   }
 
   getSelectedSandboxMode() {
@@ -7281,12 +7488,27 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return message.includes("Select one or more Canvas nodes first.");
   }
 
-  captureCanvasSelectionSnapshot() {
+  scheduleCanvasSelectionSnapshotCapture(view = null, options = {}) {
+    const delayMs = Math.max(0, toFiniteNumber(options.delayMs, 0));
+    window.clearTimeout(this.canvasSelectionCaptureTimer);
+    this.canvasSelectionCaptureTimer = window.setTimeout(() => {
+      this.canvasSelectionCaptureTimer = null;
+      this.captureCanvasSelectionSnapshot(view);
+    }, delayMs);
+  }
+
+  captureCanvasSelectionSnapshot(viewOverride = null) {
     try {
-      const view = this.resolver.getActiveCanvasView();
+      const view = viewOverride?.getViewType?.() === "canvas"
+        ? viewOverride
+        : this.resolver.getActiveCanvasView();
       if (!view) {
         return;
       }
+
+      this.ensureCanvasSelectionTrackingPatched(view);
+      this.ensureCanvasPopupMenuPatched(view);
+      this.syncCanvasPopupActionButtons(view);
 
       const file = view.file || this.app.workspace.getActiveFile();
       if (!(file instanceof TFile) || file.extension !== "canvas") {
@@ -7343,7 +7565,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         this.requestViewRefresh();
       }
     } catch {
-      // Ignore transient Canvas introspection failures during polling.
+      // Ignore transient Canvas introspection failures during selection sync.
     }
   }
 
