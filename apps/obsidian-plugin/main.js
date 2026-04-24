@@ -8680,8 +8680,12 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     const selectedNodeId = normalizedNodeIds[0];
-    if (!selectedNodeId || selectedNodeId.startsWith("oa-result-")) {
+    if (!selectedNodeId) {
       return null;
+    }
+
+    if (selectedNodeId.startsWith("oa-result-")) {
+      return this.findTaskByOpenAgentResultNode(normalizedCanvasPath, selectedNodeId);
     }
 
     const snapshot = this.getCanvasSnapshotSync(normalizedCanvasPath);
