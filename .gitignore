@@ -15,7 +15,9 @@ dist
 # Obsidian plugin runtime output
 /apps/obsidian-plugin/data.json
 /apps/convos-control/.convos-openagent/
+/apps/landing/.next/
 /.obsidian/
 /.obsidian/plugins/openagent/.hotreload
 /Workspaces/
 /OpenAgent Smoke/
+.gstack/
