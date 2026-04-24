@@ -8,6 +8,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const {
   ButtonComponent,
+  editorInfoField,
   ItemView,
   Modal,
   Notice,
@@ -19,6 +20,12 @@ const {
   TextComponent,
   TFile,
 } = require("obsidian");
+let EditorView = null;
+try {
+  ({ EditorView } = require("@codemirror/view"));
+} catch {
+  EditorView = null;
+}
 
 const VIEW_TYPE = "openagent-view";
 const DAEMON_CONFIG_PATH = path.join(os.homedir(), ".openagent", "daemon-config.json");
@@ -40,6 +47,7 @@ const DEFAULT_WORKSPACE_CANVAS_FILE = "Main.canvas";
 const WORKSPACE_INDEX_WAIT_MS = 4_000;
 const WORKSPACE_INDEX_POLL_MS = 100;
 const CANVAS_RUN_SETTLE_DELAY_MS = 250;
+const CANVAS_EDITOR_TEXT_CACHE_TTL_MS = 10_000;
 const DAEMON_SANDBOX_MODE_OPTIONS = Object.freeze({
   WORKSPACE_WRITE: "workspace-write",
   DANGER_FULL_ACCESS: "danger-full-access",
@@ -1705,8 +1713,9 @@ class OpenAgentApiClient {
 }
 
 class CanvasSelectionResolver {
-  constructor(app) {
+  constructor(app, plugin = null) {
     this.app = app;
+    this.plugin = plugin;
   }
 
   async resolveActiveSelection() {
@@ -1848,6 +1857,13 @@ class CanvasSelectionResolver {
     }
   }
 
+  getCachedCanvasNodeText(canvasPath, nodeId) {
+    if (!this.plugin || typeof this.plugin.getCanvasNodeEditorText !== "function") {
+      return undefined;
+    }
+    return this.plugin.getCanvasNodeEditorText(canvasPath, nodeId);
+  }
+
   async resolveCanvasSelection(file, selectedNodeIds, options = {}) {
     const resolvedView = String(options.view?.file?.path || "").trim() === String(file?.path || "").trim()
       ? options.view
@@ -1883,7 +1899,12 @@ class CanvasSelectionResolver {
     const selectedNodes = Array.from(selectedNodesById.values())
       .map((node) => {
         const liveNodeData = liveSelectedNodeDataById.get(String(node?.id || ""));
-        return liveNodeData ? { ...node, ...liveNodeData } : node;
+        const mergedNode = liveNodeData ? { ...node, ...liveNodeData } : { ...node };
+        const cachedText = this.getCachedCanvasNodeText(file?.path, mergedNode?.id);
+        if (cachedText !== undefined && String(mergedNode?.type || "") === "text") {
+          mergedNode.text = cachedText;
+        }
+        return mergedNode;
       })
       .sort(compareCanvasNodeOrder);
 
@@ -3957,6 +3978,72 @@ class OpenAgentSettingTab extends PluginSettingTab {
 }
 
 module.exports = class OpenAgentPlugin extends Plugin {
+  buildCanvasNodeTextCacheKey(canvasPath, nodeId) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    const normalizedNodeId = String(nodeId || "").trim();
+    if (!normalizedCanvasPath || !normalizedNodeId) {
+      return "";
+    }
+    return `${normalizedCanvasPath}::${normalizedNodeId}`;
+  }
+
+  setCanvasNodeEditorText(canvasPath, nodeId, text) {
+    const cacheKey = this.buildCanvasNodeTextCacheKey(canvasPath, nodeId);
+    if (!cacheKey) {
+      return;
+    }
+    this.liveCanvasNodeTextByKey.set(cacheKey, {
+      text: String(text || ""),
+      updatedAt: Date.now(),
+    });
+  }
+
+  getCanvasNodeEditorText(canvasPath, nodeId) {
+    const cacheKey = this.buildCanvasNodeTextCacheKey(canvasPath, nodeId);
+    if (!cacheKey) {
+      return undefined;
+    }
+    const entry = this.liveCanvasNodeTextByKey.get(cacheKey);
+    if (!entry) {
+      return undefined;
+    }
+    if (Date.now() - Number(entry.updatedAt || 0) > CANVAS_EDITOR_TEXT_CACHE_TTL_MS) {
+      this.liveCanvasNodeTextByKey.delete(cacheKey);
+      return undefined;
+    }
+    return String(entry.text || "");
+  }
+
+  registerCanvasEditorTrackingExtension() {
+    if (!EditorView || !editorInfoField || typeof this.registerEditorExtension !== "function") {
+      return;
+    }
+
+    this.registerEditorExtension([
+      EditorView.updateListener.of((update) => {
+        if (!update.docChanged) {
+          return;
+        }
+
+        let editorInfo;
+        try {
+          editorInfo = update.state.field(editorInfoField);
+        } catch {
+          return;
+        }
+
+        const node = editorInfo?.node;
+        const canvasPath = String(node?.canvas?.view?.file?.path || "").trim();
+        const nodeId = String(node?.getData?.()?.id || node?.id || "").trim();
+        if (!canvasPath || !nodeId) {
+          return;
+        }
+
+        this.setCanvasNodeEditorText(canvasPath, nodeId, update.state.doc.toString());
+      }),
+    ]);
+  }
+
   async onload() {
     const savedState = (await this.loadData()) || {};
     this.settings = {
@@ -3981,7 +4068,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.api = new OpenAgentApiClient({
       daemonLauncher: this.daemonLauncher,
     });
-    this.resolver = new CanvasSelectionResolver(this.app);
+    this.resolver = new CanvasSelectionResolver(this.app, this);
     this.runtimeIssue = "";
     this.tasksById = {};
     this.viewRefreshTimer = null;
@@ -4035,8 +4122,10 @@ module.exports = class OpenAgentPlugin extends Plugin {
       loading: false,
     };
     this.selectedGroupContextPreviewLoadPromise = null;
+    this.liveCanvasNodeTextByKey = new Map();
 
     this.registerView(VIEW_TYPE, (leaf) => new OpenAgentView(leaf, this));
+    this.registerCanvasEditorTrackingExtension();
     this.settingTab = new OpenAgentSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
     this.configureDevSmokePolling();
