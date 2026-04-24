@@ -46,7 +46,6 @@ const WORKSPACE_CONFIG_FILE_NAME = "workspace.json";
 const DEFAULT_WORKSPACE_CANVAS_FILE = "Main.canvas";
 const WORKSPACE_INDEX_WAIT_MS = 4_000;
 const WORKSPACE_INDEX_POLL_MS = 100;
-const CANVAS_RUN_SETTLE_DELAY_MS = 250;
 const CANVAS_EDITOR_TEXT_CACHE_TTL_MS = 10_000;
 const DAEMON_SANDBOX_MODE_OPTIONS = Object.freeze({
   WORKSPACE_WRITE: "workspace-write",
@@ -1736,7 +1735,6 @@ class CanvasSelectionResolver {
 
     const liveNodeDataById = this.extractLiveSelectedNodeDataById(view, selectedNodeIds);
     await this.flushPendingCanvasEdits(view);
-    await sleep(CANVAS_RUN_SETTLE_DELAY_MS);
 
     return this.resolveCanvasSelection(file, selectedNodeIds, { view, liveNodeDataById });
   }
