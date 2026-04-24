@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "openagent-market"
-  }
+  },
+  "targets": {
+    "openagent-market": {
+      "hosting": {
+        "landing": [
+          "openagent-market-landing"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

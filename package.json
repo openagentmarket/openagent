@@ -17,7 +17,7 @@
     "check:hygiene": "node ./scripts/check-hygiene.mjs",
     "check:syntax": "node ./scripts/check-syntax.mjs",
     "build:docs": "pnpm --filter @openagent/docs build",
-    "build:landing": "pnpm --filter @openagent/landing build",
+    "build:landing": "node ./scripts/fetch-landing-stars.mjs && pnpm --filter @openagent/landing build",
     "dev:convos": "pnpm --filter @openagent/convos-control dev",
     "dev:daemon": "node ./apps/openagent-daemon/src/server.js",
     "dev:docs": "pnpm --filter @openagent/docs exec docusaurus start --host 0.0.0.0 --port 3000",

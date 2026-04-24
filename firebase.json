@@ -1,13 +1,29 @@
 {
-  "hosting": {
-    "site": "openagent-market-docs",
-    "public": "apps/docs/build",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "cleanUrls": true,
-    "trailingSlash": false
-  }
+  "hosting": [
+    {
+      "target": "docs",
+      "public": "apps/docs/build",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "cleanUrls": true,
+      "trailingSlash": false
+    },
+    {
+      "target": "landing",
+      "public": "apps/landing/out",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "predeploy": [
+        "pnpm build:landing"
+      ]
+    }
+  ]
 }

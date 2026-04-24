@@ -20,7 +20,8 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { TerminalGrid } from '@/components/TerminalGrid'
 import { FadeIn } from '@/components/openagent/FadeIn'
 import { CopyButton } from '@/components/openagent/CopyButton'
-import { getOpenAgentStars, OPENAGENT_REPO_URL } from '@/lib/github'
+import { OPENAGENT_REPO_URL } from '@/lib/github'
+import { OPENAGENT_STARS } from '@/lib/github-stars'
 
 const displayFont = Cormorant_Garamond({
   subsets: ['latin'],
@@ -124,8 +125,8 @@ const GALLERY = [
   },
 ]
 
-export default async function OpenAgentPage() {
-  const stars = await getOpenAgentStars()
+export default function OpenAgentPage() {
+  const stars = OPENAGENT_STARS
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background font-[family-name:var(--font-sans)]">
