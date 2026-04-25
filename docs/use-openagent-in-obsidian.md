@@ -16,6 +16,7 @@ OpenAgent helps you turn this:
 - prompt ideas on a canvas
 - markdown files near the work
 - follow-up questions after each result
+- alternate branches from prior results
 
 into this:
 
@@ -33,6 +34,7 @@ The happy path is:
 4. run `OpenAgent: New thread from selection`
 5. review progress in the panel
 6. continue with follow-up nodes as needed
+7. fork from an older result when you want a separate alternate thread
 
 If you want the complete operational guide, read:
 
@@ -67,6 +69,7 @@ Read:
 
 - [OpenAgent User Guide](./getting-started/user-guide.md#result-node)
 - [OpenAgent User Guide](./getting-started/user-guide.md#5-continue-with-a-follow-up)
+- [Canvas Branching](./concepts/canvas-branching.md)
 
 ### If something feels broken
 

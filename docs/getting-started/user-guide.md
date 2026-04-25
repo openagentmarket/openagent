@@ -134,6 +134,7 @@ Typical patterns:
 - one text node plus connected image file nodes
 - a text node inside a group whose markdown file nodes should become default group context
 - a previous assistant result node plus a follow-up request node
+- a previous assistant result node plus a fork request node for an alternate branch
 
 ### 3. Start a Thread
 
@@ -183,6 +184,26 @@ Add a new text node connected to the previous result node and run `OpenAgent: Ne
 You can also run `OpenAgent: Create follow-up node` and bind it to a hotkey. The command creates the follow-up text node and links it to the selected OpenAgent source or result node for you.
 
 OpenAgent will try to reuse the same daemon task and Codex thread while changing the active source node for result sync.
+
+### 6. Branch from a Result
+
+Use a fork when you want an alternate path from an existing answer without changing the original conversation.
+
+The recommended shape is:
+
+1. Select an assistant result node.
+2. Click the fork icon in the Canvas node menu.
+3. Write the alternate prompt in the new fork request node.
+4. Run `OpenAgent: New thread from selection` on that fork request node.
+5. Confirm `Fork from here?`.
+
+OpenAgent treats the result node as the checkpoint and the new text node as the branch prompt. After confirmation, the branch gets a separate task and Codex thread, and the original task stays untouched.
+
+The fork icon appears only on OpenAgent assistant result nodes. You can also run
+`OpenAgent: Create fork node` from the command palette or bind it to a hotkey;
+it follows the same rule and requires selecting a result node first.
+
+For the detailed rule, see [Canvas Branching](../concepts/canvas-branching.md).
 
 ## Files OpenAgent Writes
 

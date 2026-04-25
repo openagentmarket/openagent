@@ -111,6 +111,7 @@ OpenAgent relies on Canvas selection as task context. In practice, the most usef
 - selecting the exact cards you want to send as context
 - grouping related notes before starting a thread
 - connecting follow-up requests to prior result nodes
+- branching from prior result nodes when you want an alternate thread
 - using zoom and pan shortcuts to navigate larger working canvases quickly
 
 OpenAgent also treats some groups as `group context` during new-thread creation:
@@ -118,6 +119,8 @@ OpenAgent also treats some groups as `group context` during new-thread creation:
 - if you start a new thread from one text node
 - markdown file nodes in the same Canvas group can be included automatically as default context
 - this is separate from edge-based follow-up behavior
+
+For alternate conversation paths, OpenAgent treats assistant result nodes as branch checkpoints. The fork icon appears only on result nodes. Select a result node, create a fork node, write the alternate request there, then run that fork node. See [Canvas Branching](./canvas-branching.md).
 
 ## Sources
 

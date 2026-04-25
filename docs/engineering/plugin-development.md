@@ -197,6 +197,21 @@ This script currently verifies:
 3. the follow-up source does not briefly receive the previous assistant reply before the new reply arrives
 4. the follow-up result node is written back with the expected Canvas metadata
 
+### 7. Fork branch close-the-loop smoke
+
+```bash
+pnpm run test:obsidian-fork-branch
+```
+
+Use this when changing Canvas branch detection or Codex thread forking.
+
+This script currently verifies:
+
+1. a normal follow-up still reuses the existing task/thread
+2. a second branch from an older result creates a new task/thread
+3. the fork rolls back later turns before running the branch prompt
+4. the fork result node is written back with the expected Canvas metadata
+
 ## Hot Reload behavior
 
 Hot Reload watches `.obsidian/plugins/...` in the vault, not the repo directly.

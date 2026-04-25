@@ -30,6 +30,7 @@
     "test:obsidian-image-only-new-thread": "node ./scripts/obsidian-image-only-new-thread-smoke.mjs",
     "test:obsidian-markdown-new-thread": "node ./scripts/obsidian-markdown-new-thread-smoke.mjs",
     "test:obsidian-follow-up-chain": "node ./scripts/obsidian-follow-up-chain-smoke.mjs",
+    "test:obsidian-fork-branch": "node ./scripts/obsidian-fork-branch-smoke.mjs",
     "test:obsidian-node-colors": "node ./scripts/obsidian-node-colors-smoke.mjs",
     "sync:obsidian-plugin": "node ./scripts/sync-obsidian-plugin.mjs",
     "test:obsidian-smoke": "node ./scripts/obsidian-smoke.mjs",

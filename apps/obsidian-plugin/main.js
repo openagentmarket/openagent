@@ -78,6 +78,7 @@ const RUNNING_CANVAS_NODE_COLOR = "3";
 const COMPLETED_CANVAS_NODE_COLOR = "#086ddd";
 const CANVAS_NEW_THREAD_BUTTON_ID = "oa-canvas-new-thread-button";
 const CANVAS_FOLLOW_UP_NODE_BUTTON_ID = "oa-canvas-follow-up-node-button";
+const CANVAS_FORK_NODE_BUTTON_ID = "oa-canvas-fork-node-button";
 const AUTO_RUN_TRIGGER_CANVAS_NODE_COLORS = Object.freeze([
   "4",
   "#22c55e",
@@ -1278,6 +1279,63 @@ class WorkspacePickerModal extends Modal {
   }
 }
 
+class CanvasForkConfirmModal extends Modal {
+  constructor(app, options = {}) {
+    super(app);
+    this.options = options;
+    this.resolve = typeof options.resolve === "function" ? options.resolve : () => {};
+    this.didChoose = false;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("oa-fork-modal");
+    contentEl.createEl("h2", { text: "Fork from here?" });
+    contentEl.createDiv({
+      cls: "oa-fork-modal-subtitle",
+      text: "This branch starts a separate OpenAgent thread from the selected Canvas point.",
+    });
+
+    const details = contentEl.createDiv({ cls: "oa-fork-modal-details" });
+    const originLabel = String(this.options.originLabel || "").trim();
+    const rollbackTurns = Math.max(0, Math.floor(Number(this.options.rollbackTurns || 0)));
+    if (originLabel) {
+      details.createDiv({ text: `Origin: ${originLabel}` });
+    }
+    if (rollbackTurns > 0) {
+      details.createDiv({ text: `Codex will fork the thread and drop ${rollbackTurns} later turn${rollbackTurns === 1 ? "" : "s"} before running this node.` });
+    }
+
+    const actions = contentEl.createDiv({ cls: "oa-action-row oa-fork-modal-actions" });
+    const forkButton = new ButtonComponent(actions);
+    forkButton.setButtonText("Fork and run");
+    forkButton.setCta();
+    forkButton.onClick(() => this.choose("fork"));
+
+    const continueButton = new ButtonComponent(actions);
+    continueButton.setButtonText("Continue thread");
+    continueButton.onClick(() => this.choose("continue"));
+
+    const cancelButton = new ButtonComponent(actions);
+    cancelButton.setButtonText("Cancel");
+    cancelButton.onClick(() => this.choose("cancel"));
+  }
+
+  choose(value) {
+    this.didChoose = true;
+    this.resolve(value);
+    this.close();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (!this.didChoose) {
+      this.resolve("cancel");
+    }
+  }
+}
+
 class OpenAgentDaemonLauncher {
   constructor(plugin) {
     this.plugin = plugin;
@@ -1538,6 +1596,10 @@ class OpenAgentApiClient {
 
   runTask(taskId, body = {}) {
     return this.request("POST", `/tasks/${encodeURIComponent(taskId)}/run`, body);
+  }
+
+  forkTask(taskId, body = {}) {
+    return this.request("POST", `/tasks/${encodeURIComponent(taskId)}/fork`, body);
   }
 
   sendMessage(taskId, text, runtimeConfig = null) {
@@ -4239,6 +4301,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "openagent-create-fork-node",
+      name: "Create fork node",
+      callback: () => {
+        void this.handleCreateForkNodeCommand();
+      },
+    });
+
     this.app.workspace.onLayoutReady(() => {
       this.ensureCanvasPopupMenuPatches();
       this.ensureCanvasSelectionTrackingPatches();
@@ -4395,13 +4465,24 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     const selectedNodeIds = this.resolver.extractSelectedNodeIds(view);
     const shouldShow = selectedNodeIds.length === 1;
+    const selectedCanvasPath = String(view?.file?.path || this.app.workspace.getActiveFile()?.path || "").trim();
+    const selectedNode = shouldShow && selectedCanvasPath
+      ? this.getCanvasSnapshotSync(selectedCanvasPath)?.nodeById?.get(String(selectedNodeIds[0] || "").trim()) || null
+      : null;
+    const shouldShowFork = shouldShow && isOpenAgentAssistantResultNode(selectedNode);
     const existingNewThreadButton = menuEl.querySelector(`#${CANVAS_NEW_THREAD_BUTTON_ID}`);
     const existingFollowUpButton = menuEl.querySelector(`#${CANVAS_FOLLOW_UP_NODE_BUTTON_ID}`);
+    const existingForkButton = menuEl.querySelector(`#${CANVAS_FORK_NODE_BUTTON_ID}`);
 
     if (!shouldShow) {
       existingNewThreadButton?.remove();
       existingFollowUpButton?.remove();
+      existingForkButton?.remove();
       return false;
+    }
+
+    if (!shouldShowFork) {
+      existingForkButton?.remove();
     }
 
     if (!existingNewThreadButton) {
@@ -4436,6 +4517,27 @@ module.exports = class OpenAgentPlugin extends Plugin {
       });
 
       menuEl.appendChild(followUpButton);
+    }
+
+    if (shouldShowFork && !existingForkButton) {
+      const forkButton = document.createElement("button");
+      forkButton.id = CANVAS_FORK_NODE_BUTTON_ID;
+      forkButton.classList.add("clickable-icon");
+      forkButton.setAttribute("type", "button");
+      forkButton.setAttribute("aria-label", "Create fork node");
+      setIcon(forkButton, "git-fork");
+      setTooltip(forkButton, "Create fork node", { placement: "top" });
+      forkButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.handleCreateForkNodeCommand();
+      });
+
+      if (existingFollowUpButton?.nextSibling) {
+        menuEl.insertBefore(forkButton, existingFollowUpButton.nextSibling);
+      } else {
+        menuEl.appendChild(forkButton);
+      }
     }
 
     return true;
@@ -5224,11 +5326,17 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
       if (request?.runTask !== false && smokeMode === "new-thread" && request?.forceNewTask === true) {
         selection = await this.resolver.addImplicitCanvasFileContext(selection);
-        const followUpResult = await this.runSelectionAsFollowUp(selection);
+        const followUpResult = await this.runSelectionAsFollowUp(selection, {
+          confirmFork: async () => request?.forkBehavior === "fork" ? "fork" : "continue",
+        });
         if (followUpResult) {
-          task = followUpResult.task;
-          rawPrompt = followUpResult.message;
-          runMode = "follow-up";
+          if (followUpResult.cancelled) {
+            runMode = "cancelled";
+          } else {
+            task = followUpResult.task;
+            rawPrompt = followUpResult.message;
+            runMode = followUpResult.mode || "follow-up";
+          }
         }
       }
 
@@ -5702,6 +5810,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     const edges = Array.isArray(parsed?.edges) ? parsed.edges : [];
+    const nodes = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
+    const followUpNode = nodes.find((node) => String(node?.id || "").trim() === followUpNodeId) || null;
+    const followUpMetadata = getOpenAgentCanvasMetadata(followUpNode);
     for (const edge of edges) {
       const toNodeId = String(edge?.toNode || "").trim();
       if (toNodeId !== followUpNodeId) {
@@ -5709,25 +5820,134 @@ module.exports = class OpenAgentPlugin extends Plugin {
       }
 
       const upstreamNodeId = String(edge?.fromNode || "").trim();
-      const task = this.findConversationTaskForUpstreamNode(canvasPath, upstreamNodeId);
+      const upstreamNode = nodes.find((node) => String(node?.id || "").trim() === upstreamNodeId) || null;
+      let task = this.findConversationTaskForUpstreamNode(canvasPath, upstreamNodeId);
+      if (!task) {
+        const metadataTaskId = getOpenAgentResultTaskId(upstreamNode);
+        if (metadataTaskId) {
+          try {
+            await this.refreshTask(metadataTaskId, { force: true });
+            task = this.findConversationTaskForUpstreamNode(canvasPath, upstreamNodeId);
+          } catch {
+            task = null;
+          }
+        }
+      }
       if (!task) {
         continue;
       }
 
+      const upstreamResultSourceNodeId = getOpenAgentResultSourceNodeId(upstreamNode);
+      const canForkFromUpstream = isOpenAgentAssistantResultNode(upstreamNode);
+      const branchSourceNodeId = String(
+        followUpMetadata?.branchSourceNodeId
+        || followUpMetadata?.sourceNodeId
+        || upstreamResultSourceNodeId
+        || upstreamNodeId
+      ).trim();
       return {
         task,
         message: followUpMessage,
         sourceNodeId: followUpNodeId,
+        upstreamNodeId,
+        branchSourceNodeId,
+        branchMessageId: String(
+          followUpMetadata?.branchMessageId
+          || getOpenAgentCanvasMetadata(upstreamNode)?.messageId
+          || task?.canvasBinding?.resultNodesBySourceNodeId?.[branchSourceNodeId]?.messageId
+          || ""
+        ).trim(),
+        canForkFromUpstream,
+        forceFork: followUpMetadata?.kind === "fork-request",
       };
     }
 
     return null;
   }
 
-  async runSelectionAsFollowUp(selection) {
+  countTaskUserTurnsAfterMessage(task, messageId) {
+    const normalizedMessageId = String(messageId || "").trim();
+    if (!normalizedMessageId) {
+      return 0;
+    }
+
+    const messages = Array.isArray(task?.messages) ? task.messages : [];
+    const index = messages.findIndex((message) => {
+      return String(message?.id || message?.streamKey || "").trim() === normalizedMessageId;
+    });
+    if (index < 0) {
+      return 0;
+    }
+
+    return messages.slice(index + 1).filter((message) => {
+      return String(message?.role || "") === "user" && String(message?.text || "").trim();
+    }).length;
+  }
+
+  buildCanvasForkTarget(selection, followUpTarget) {
+    const task = followUpTarget?.task;
+    const canvasPath = String(selection?.canvasPath || "").trim();
+    const sourceNodeId = String(followUpTarget?.sourceNodeId || "").trim();
+    const branchSourceNodeId = String(followUpTarget?.branchSourceNodeId || "").trim();
+    const activeSourceNodeId = String(task?.canvasBinding?.activeSourceNodeId || "").trim();
+    const forceFork = followUpTarget?.forceFork === true;
+    const canForkFromUpstream = followUpTarget?.canForkFromUpstream === true;
+    if (!task?.threadId || !canvasPath || !sourceNodeId || !branchSourceNodeId) {
+      return null;
+    }
+
+    if (!forceFork && !canForkFromUpstream) {
+      return null;
+    }
+
+    if (!forceFork && (!activeSourceNodeId || activeSourceNodeId === branchSourceNodeId)) {
+      return null;
+    }
+
+    const branchMessageId = String(followUpTarget?.branchMessageId || "").trim();
+    return {
+      task,
+      sourceNodeId,
+      branchSourceNodeId,
+      branchMessageId,
+      forceFork,
+      canForkFromUpstream,
+      upstreamNodeId: String(followUpTarget?.upstreamNodeId || "").trim(),
+      rollbackTurns: this.countTaskUserTurnsAfterMessage(task, branchMessageId),
+    };
+  }
+
+  async confirmCanvasForkFromHere(forkTarget) {
+    return new Promise((resolve) => {
+      new CanvasForkConfirmModal(this.app, {
+        originLabel: forkTarget?.branchSourceNodeId || "",
+        rollbackTurns: forkTarget?.rollbackTurns || 0,
+        resolve,
+      }).open();
+    });
+  }
+
+  async runSelectionAsFollowUp(selection, options = {}) {
     const followUpTarget = await this.resolveCanvasFollowUpTarget(selection);
     if (!followUpTarget) {
       return null;
+    }
+
+    const forkTarget = this.buildCanvasForkTarget(selection, followUpTarget);
+    if (forkTarget) {
+      const decideFork = typeof options.confirmFork === "function"
+        ? await options.confirmFork(forkTarget)
+        : await this.confirmCanvasForkFromHere(forkTarget);
+      if (decideFork === "cancel" || decideFork === false || decideFork == null) {
+        return {
+          cancelled: true,
+          task: forkTarget.task,
+          message: followUpTarget.message,
+        };
+      }
+      if (decideFork === "fork" || decideFork === true) {
+        return this.runSelectionAsFork(selection, followUpTarget, forkTarget);
+      }
     }
 
     const task = followUpTarget.task;
@@ -5764,6 +5984,33 @@ module.exports = class OpenAgentPlugin extends Plugin {
     };
   }
 
+  async runSelectionAsFork(selection, followUpTarget, forkTarget) {
+    const task = followUpTarget.task;
+    const markdownFiles = Array.isArray(selection?.markdownFiles) ? selection.markdownFiles : [];
+    const imageFiles = Array.isArray(selection?.imageFiles) ? selection.imageFiles : [];
+    const runtimeConfig = this.buildRuntimeConfigPayload();
+    const rawPrompt = (markdownFiles.length > 0 || imageFiles.length > 0)
+      ? buildCanvasSelectionPrompt(selection, followUpTarget.message, { cwd: task.cwd })
+      : followUpTarget.message;
+    const response = await this.api.forkTask(task.taskId, {
+      selectionContext: selection,
+      cwd: task.cwd || this.resolver.inferWorkingDirectory(selection),
+      rawPrompt,
+      transcriptMessage: followUpTarget.message,
+      forceContext: false,
+      branchSourceNodeId: forkTarget.branchSourceNodeId,
+      branchMessageId: forkTarget.branchMessageId,
+      rollbackTurns: forkTarget.rollbackTurns,
+      runtimeConfig,
+    });
+
+    return {
+      task: this.mergeTask(response.task),
+      message: followUpTarget.message,
+      mode: "fork",
+    };
+  }
+
   async handleCreateFollowUpNodeCommand() {
     try {
       const result = await this.createFollowUpNodeFromSelection();
@@ -5789,7 +6036,32 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
   }
 
-  async createFollowUpNodeFromSelection() {
+  async handleCreateForkNodeCommand() {
+    try {
+      const result = await this.createFollowUpNodeFromSelection({ fork: true });
+      await this.revealCanvasNodeForEditing(result.canvasPath, result.followUpNodeId);
+      this.runtimeIssue = "";
+      this.rememberSelectionSnapshot({
+        canvasPath: result.canvasPath,
+        nodeIds: [result.followUpNodeId],
+      });
+      await this.appendDebugEvent("canvas_fork_node_created", {
+        canvasPath: result.canvasPath,
+        selectedNodeId: result.selectedNodeId,
+        anchorNodeId: result.anchorNodeId,
+        followUpNodeId: result.followUpNodeId,
+      });
+    } catch (error) {
+      this.runtimeIssue = String(error?.message || error);
+      await this.appendDebugEvent("canvas_fork_node_error", {
+        message: this.runtimeIssue,
+      });
+      new Notice(this.runtimeIssue);
+      this.requestViewRefresh({ force: true });
+    }
+  }
+
+  async createFollowUpNodeFromSelection(options = {}) {
     const view = this.resolver.getActiveCanvasView();
     if (!view) {
       throw new Error("Open a Canvas view first.");
@@ -5827,16 +6099,35 @@ module.exports = class OpenAgentPlugin extends Plugin {
       if (!selectedNode) {
         throw new Error("The selected Canvas node could not be found.");
       }
+      if (options.fork === true && !isOpenAgentAssistantResultNode(selectedNode)) {
+        throw new Error("Select an OpenAgent result node before creating a fork.");
+      }
 
       const anchor = this.resolveFollowUpAnchorForSelectedNode(file.path, selectedNodeId, nodeById);
-      const followUpNodeId = createCanvasObjectId("oa-follow-up");
-      const followUpNode = this.buildCanvasFollowUpNode(anchor.anchorNode, followUpNodeId, edges, nodeById);
+      const isForkNode = options.fork === true;
+      const followUpNodeId = createCanvasObjectId(isForkNode ? "oa-fork" : "oa-follow-up");
+      const followUpNode = this.buildCanvasFollowUpNode(anchor.anchorNode, followUpNodeId, edges, nodeById, {
+        fork: isForkNode,
+        task: anchor.task,
+        branchSourceNodeId: this.getCanvasBranchSourceNodeId(anchor.anchorNode, anchor.anchorNodeId),
+      });
       const followUpEdge = {
-        id: createCanvasObjectId("oa-follow-up-edge"),
+        id: createCanvasObjectId(isForkNode ? "oa-fork-edge" : "oa-follow-up-edge"),
         fromNode: anchor.anchorNodeId,
         toNode: followUpNodeId,
         fromSide: "bottom",
         toSide: "top",
+        ...(isForkNode
+          ? {
+              openagent: {
+                schemaVersion: OPENAGENT_CANVAS_SCHEMA_VERSION,
+                kind: "fork-edge",
+                taskId: String(anchor.task?.taskId || ""),
+                threadId: String(anchor.task?.threadId || ""),
+                sourceNodeId: this.getCanvasBranchSourceNodeId(anchor.anchorNode, anchor.anchorNodeId),
+              },
+            }
+          : {}),
       };
 
       const nextParsed = {
@@ -5906,7 +6197,20 @@ module.exports = class OpenAgentPlugin extends Plugin {
     };
   }
 
-  buildCanvasFollowUpNode(anchorNode, followUpNodeId, edges, nodeById) {
+  getCanvasBranchSourceNodeId(anchorNode, fallbackNodeId = "") {
+    return getOpenAgentResultSourceNodeId(anchorNode) || String(fallbackNodeId || anchorNode?.id || "").trim();
+  }
+
+  getCanvasBranchMessageId(task, branchSourceNodeId, anchorNode = null) {
+    const nodeMessageId = String(getOpenAgentCanvasMetadata(anchorNode)?.messageId || "").trim();
+    if (nodeMessageId) {
+      return nodeMessageId;
+    }
+
+    return String(task?.canvasBinding?.resultNodesBySourceNodeId?.[branchSourceNodeId]?.messageId || "").trim();
+  }
+
+  buildCanvasFollowUpNode(anchorNode, followUpNodeId, edges, nodeById, options = {}) {
     const width = clampNumber(
       toFiniteNumber(anchorNode?.width, RESULT_NODE_DEFAULT_WIDTH),
       RESULT_NODE_MIN_WIDTH,
@@ -5925,6 +6229,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
         }, toFiniteNumber(anchorNode?.y, 0) + toFiniteNumber(anchorNode?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT) + RESULT_NODE_Y_GAP)
       : toFiniteNumber(anchorNode?.y, 0) + toFiniteNumber(anchorNode?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT) + RESULT_NODE_Y_GAP;
 
+    const isForkNode = options.fork === true;
+    const branchSourceNodeId = String(options.branchSourceNodeId || this.getCanvasBranchSourceNodeId(anchorNode)).trim();
+    const branchMessageId = this.getCanvasBranchMessageId(options.task, branchSourceNodeId, anchorNode);
     return {
       id: followUpNodeId,
       type: "text",
@@ -5933,6 +6240,19 @@ module.exports = class OpenAgentPlugin extends Plugin {
       width,
       height: FOLLOW_UP_NODE_DEFAULT_HEIGHT,
       text: "",
+      ...(isForkNode
+        ? {
+            openagent: {
+              schemaVersion: OPENAGENT_CANVAS_SCHEMA_VERSION,
+              kind: "fork-request",
+              taskId: String(options.task?.taskId || ""),
+              threadId: String(options.task?.threadId || ""),
+              sourceNodeId: branchSourceNodeId,
+              branchSourceNodeId,
+              branchMessageId,
+            },
+          }
+        : {}),
     };
   }
 
@@ -7785,14 +8105,26 @@ module.exports = class OpenAgentPlugin extends Plugin {
         effectiveSelection = await this.resolver.addImplicitCanvasFileContext(selection);
         const followUpResult = await this.runSelectionAsFollowUp(effectiveSelection);
         if (followUpResult) {
+          if (followUpResult.cancelled) {
+            await this.appendDebugEvent("follow_up_cancelled", {
+              taskId: followUpResult.task?.taskId || "",
+              sourceNodeId: effectiveSelection.nodeIds?.[0] || "",
+            });
+            return;
+          }
           await this.appendDebugEvent("follow_up_requested", {
             taskId: followUpResult.task.taskId,
             message: followUpResult.message,
             sourceNodeId: effectiveSelection.nodeIds?.[0] || "",
+            mode: followUpResult.mode || "follow-up",
           });
           this.runtimeIssue = "";
           await this.setActiveTask(followUpResult.task.taskId, { revealInActiveTab: true });
-          new Notice("Sent this selection to the existing OpenAgent thread.");
+          new Notice(
+            followUpResult.mode === "fork"
+              ? "Forked this Canvas branch into a new OpenAgent thread."
+              : "Sent this selection to the existing OpenAgent thread."
+          );
           await this.refreshTask(followUpResult.task.taskId, { force: true });
           return;
         }

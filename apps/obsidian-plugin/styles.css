@@ -1169,6 +1169,32 @@
   box-shadow: none;
 }
 
+.oa-fork-modal {
+  display: grid;
+  gap: 12px;
+}
+
+.oa-fork-modal h2 {
+  margin: 0;
+}
+
+.oa-fork-modal-subtitle,
+.oa-fork-modal-details {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.oa-fork-modal-details {
+  display: grid;
+  gap: 4px;
+}
+
+.oa-fork-modal-actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 @media (min-width: 680px) {
   .openagent-view .oa-settings-section .setting-item {
     grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);

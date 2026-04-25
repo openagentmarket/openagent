@@ -86,6 +86,7 @@ Important routes:
 - `GET /tasks/:taskId/stream`
 - `POST /tasks/from-canvas-selection`
 - `POST /tasks/:taskId/run`
+- `POST /tasks/:taskId/fork`
 - `POST /tasks/:taskId/messages`
 - `PATCH /tasks/:taskId/canvas-binding`
 - `POST /tasks/:taskId/interrupt`
@@ -183,6 +184,14 @@ This matters most for follow-ups:
 - the root selection can stay stable across a chain
 - the active source node can move to a newer follow-up node
 - result sync should only attach assistant output to the correct active source
+- a branch from an older result can fork the source Codex thread, roll back later
+  turns in the fork, and continue from that Canvas point as a separate task
+
+The UX contract is that assistant result nodes are branch checkpoints and text
+nodes are branch prompts. The fork icon and `OpenAgent: Create fork node`
+command require selecting a result node, then create a text node connected from
+that checkpoint. The actual Codex fork happens only when that prompt node is run
+and the user confirms the fork.
 
 ## Runtime and Streaming Flow
 

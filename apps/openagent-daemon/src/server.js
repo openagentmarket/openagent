@@ -442,6 +442,44 @@ class CodexAppServerClient {
     throw lastError || new Error("Unable to start Codex thread.");
   }
 
+  async forkThread(sourceTask, runtimeConfig = DEFAULT_RUNTIME_CONFIG, options = {}) {
+    await this.start();
+    const sourceThreadId = String(sourceTask?.threadId || "").trim();
+    if (!sourceThreadId) {
+      throw new Error("The source task does not have a Codex thread to fork.");
+    }
+
+    const normalizedRuntimeConfig = normalizeRuntimeConfig(runtimeConfig);
+    const sandboxVariants = buildThreadSandboxVariants(normalizedRuntimeConfig.sandboxMode);
+    let lastError = null;
+
+    for (const sandbox of sandboxVariants) {
+      try {
+        const response = await this.request("thread/fork", {
+          threadId: sourceThreadId,
+          cwd: sourceTask.cwd,
+          approvalPolicy: normalizedRuntimeConfig.approvalPolicy,
+          sandbox,
+          persistExtendedHistory: true,
+        });
+        const thread = response?.thread || response;
+        const forkedThreadId = String(thread?.id || "").trim();
+        const rollbackTurns = Math.max(0, Math.floor(Number(options.rollbackTurns || 0)));
+        if (forkedThreadId && rollbackTurns > 0) {
+          await this.request("thread/rollback", {
+            threadId: forkedThreadId,
+            numTurns: rollbackTurns,
+          });
+        }
+        return thread;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error("Unable to fork Codex thread.");
+  }
+
   async sendTurn(task, inputItems, runtimeConfig = DEFAULT_RUNTIME_CONFIG) {
     await this.start();
     const normalizedRuntimeConfig = normalizeRuntimeConfig(runtimeConfig);
@@ -1161,6 +1199,100 @@ class OpenAgentDaemon {
     return nextTask;
   }
 
+  buildForkedTaskMessages(sourceTask, branchMessageId = "") {
+    const messages = Array.isArray(sourceTask?.messages) ? sourceTask.messages : [];
+    const normalizedBranchMessageId = String(branchMessageId || "").trim();
+    if (!normalizedBranchMessageId) {
+      return [...messages];
+    }
+
+    const branchMessageIndex = messages.findIndex((message) => {
+      return String(message?.id || message?.streamKey || "").trim() === normalizedBranchMessageId;
+    });
+    if (branchMessageIndex < 0) {
+      return [...messages];
+    }
+
+    return messages.slice(0, branchMessageIndex + 1);
+  }
+
+  async forkTaskFromCanvasSelection(sourceTaskId, body = {}) {
+    const sourceTask = this.store.getTask(sourceTaskId);
+    if (!sourceTask) {
+      throw new Error("Source task not found.");
+    }
+    if (!sourceTask.threadId) {
+      throw new Error("The source task does not have a Codex thread to fork.");
+    }
+
+    const selectionContext = normalizeCanvasSelection(body.selectionContext || body);
+    if (!selectionContext.canvasPath || selectionContext.nodeIds.length === 0) {
+      throw new Error("A canvasPath and at least one selected node are required.");
+    }
+
+    const requestedCwd = normalizeWorkingDirectory(body.cwd || sourceTask.cwd);
+    if (!requestedCwd) {
+      throw new Error("Set a working directory before forking.");
+    }
+
+    const runtimeConfig = normalizeRuntimeConfig(body.runtimeConfig || sourceTask.runtimeConfig);
+    const selectionKey = createSelectionKey(selectionContext);
+    const taskId = createFreshTaskId(selectionKey, requestedCwd);
+    const selectedSourceNodeId = String(selectionContext.nodeIds[0] || "").trim();
+    const branchRootNodeId = String(body.branchSourceNodeId || "").trim() || selectedSourceNodeId;
+    const forkedMessages = this.buildForkedTaskMessages(sourceTask, body.branchMessageId);
+
+    let nextTask = this.store.upsertTask(createTaskBinding({
+      taskId,
+      source: "obsidian-canvas",
+      sourceRef: selectionContext.canvasPath,
+      cwd: requestedCwd,
+      status: "starting",
+      title: selectionContext.title,
+      selectionContext,
+      threadId: null,
+      currentTurnId: null,
+      lastError: "",
+      messages: forkedMessages,
+      runtimeConfig,
+      canvasBinding: this.buildCanvasBinding(selectionContext, sourceTask.canvasBinding, {
+        canvasPath: selectionContext.canvasPath,
+        rootNodeIds: branchRootNodeId ? [branchRootNodeId] : selectionContext.nodeIds,
+        activeSourceNodeId: selectedSourceNodeId,
+      }),
+    }));
+    this.publishTask(nextTask);
+
+    try {
+      await this.ensureRuntimeReady();
+      const thread = await this.client.forkThread(sourceTask, runtimeConfig, {
+        rollbackTurns: body.rollbackTurns,
+      });
+      nextTask = this.store.patchTask(taskId, {
+        threadId: thread?.id || null,
+        status: "idle",
+      });
+      this.publishTask(nextTask);
+
+      const rawPrompt = String(body.rawPrompt || body.message || "");
+      return this.runTask(taskId, {
+        rawPrompt,
+        transcriptMessage: String(body.transcriptMessage || body.message || rawPrompt || ""),
+        forceContext: body.forceContext !== false,
+        selectionContext,
+        runtimeConfig,
+      });
+    } catch (error) {
+      nextTask = this.store.patchTask(taskId, {
+        currentTurnId: null,
+        status: "error",
+        lastError: String(error?.message || error),
+      });
+      this.publishTask(nextTask);
+      throw error;
+    }
+  }
+
   async ensureRuntimeReady() {
     const runtimeCheck = this.locator.validateRuntimeAvailable();
     if (!runtimeCheck.ok) {
@@ -1480,6 +1612,13 @@ class OpenAgentDaemon {
           selectionContext: body.selectionContext || null,
           runtimeConfig: body.runtimeConfig || {},
         });
+        sendJson(response, 200, { task: this.taskPayload(task) });
+        return;
+      }
+
+      if (request.method === "POST" && /^\/tasks\/[^/]+\/fork$/.test(pathname)) {
+        const body = await readRequestBody(request);
+        const task = await this.forkTaskFromCanvasSelection(parseTaskId(pathname), body);
         sendJson(response, 200, { task: this.taskPayload(task) });
         return;
       }
