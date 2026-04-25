@@ -6,6 +6,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const { fileURLToPath, pathToFileURL } = require("url");
 const {
   ButtonComponent,
   editorInfoField,
@@ -200,6 +201,80 @@ function normalizePanelTab(value) {
 
 function normalizePromptPath(value) {
   return String(value || "").trim().replace(/\\/g, "/");
+}
+
+function normalizeFilesystemPathForCompare(value) {
+  return normalizePromptPath(path.resolve(String(value || "").trim()));
+}
+
+function encodeMarkdownLinkPath(value) {
+  return String(value || "")
+    .split("/")
+    .map((segment) => encodeURIComponent(segment).replace(/[()]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`))
+    .join("/");
+}
+
+function decodeMarkdownLinkTarget(value) {
+  const normalized = String(value || "").trim();
+  try {
+    return decodeURI(normalized);
+  } catch {
+    return normalized;
+  }
+}
+
+function parseLocalMarkdownLinkTarget(rawTarget) {
+  const target = String(rawTarget || "").trim();
+  if (!target) {
+    return null;
+  }
+
+  const hashIndex = target.indexOf("#");
+  const targetWithoutFragment = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
+  const fragment = hashIndex >= 0 ? target.slice(hashIndex) : "";
+  const decodedTarget = decodeMarkdownLinkTarget(targetWithoutFragment);
+  let localPath = decodedTarget;
+
+  if (/^file:\/\//i.test(decodedTarget)) {
+    try {
+      localPath = fileURLToPath(decodedTarget);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!path.isAbsolute(localPath)) {
+    return null;
+  }
+
+  let normalizedPath = localPath;
+  if (!fs.existsSync(normalizedPath)) {
+    const lineSuffixMatch = normalizedPath.match(/^(.*):\d+(?::\d+)?$/);
+    if (lineSuffixMatch && path.isAbsolute(lineSuffixMatch[1])) {
+      normalizedPath = lineSuffixMatch[1];
+    }
+  }
+
+  return {
+    localPath: normalizedPath,
+    fragment,
+  };
+}
+
+function rewriteMarkdownLinks(text, rewriteTarget) {
+  const source = String(text || "");
+  if (!source || typeof rewriteTarget !== "function") {
+    return source;
+  }
+
+  return source.replace(/(\[[^\]\n]*\]\()(<[^>\n]*>|[^)\s\n]*)(\))/g, (match, prefix, rawTarget, suffix) => {
+    const target = String(rawTarget || "");
+    const unwrappedTarget = target.startsWith("<") && target.endsWith(">")
+      ? target.slice(1, -1)
+      : target;
+    const rewrittenTarget = rewriteTarget(unwrappedTarget);
+    return rewrittenTarget ? `${prefix}${rewrittenTarget}${suffix}` : match;
+  });
 }
 
 function createDaemonStatusSnapshot(overrides = {}) {
@@ -4848,6 +4923,62 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return this.resolver?.getVaultBasePath?.() || "";
   }
 
+  getVaultPathForAbsolutePath(absolutePath) {
+    const normalizedAbsolutePath = String(absolutePath || "").trim();
+    const vaultBasePath = this.getVaultBasePath();
+    if (!normalizedAbsolutePath || !path.isAbsolute(normalizedAbsolutePath) || !vaultBasePath) {
+      return "";
+    }
+
+    const targetPath = normalizeFilesystemPathForCompare(normalizedAbsolutePath);
+    const normalizedVaultBasePath = normalizeFilesystemPathForCompare(vaultBasePath);
+    if (targetPath === normalizedVaultBasePath || targetPath.startsWith(`${normalizedVaultBasePath}/`)) {
+      const directVaultPath = normalizePromptPath(path.relative(vaultBasePath, normalizedAbsolutePath));
+      const directFile = this.app.vault.getAbstractFileByPath(directVaultPath);
+      if (directFile instanceof TFile) {
+        return directFile.path;
+      }
+    }
+
+    const targetRealpath = safeRealpathSync(normalizedAbsolutePath);
+    const targetComparablePath = targetRealpath
+      ? normalizeFilesystemPathForCompare(targetRealpath)
+      : targetPath;
+
+    for (const file of this.app.vault.getFiles()) {
+      const fileAbsolutePath = this.getVaultAbsolutePath(file.path);
+      if (!fileAbsolutePath) {
+        continue;
+      }
+
+      const fileRealpath = safeRealpathSync(fileAbsolutePath);
+      const fileComparablePath = fileRealpath
+        ? normalizeFilesystemPathForCompare(fileRealpath)
+        : normalizeFilesystemPathForCompare(fileAbsolutePath);
+      if (fileComparablePath === targetComparablePath) {
+        return file.path;
+      }
+    }
+
+    return "";
+  }
+
+  normalizeAssistantLinksForObsidian(text) {
+    return rewriteMarkdownLinks(text, (rawTarget) => {
+      const parsed = parseLocalMarkdownLinkTarget(rawTarget);
+      if (!parsed) {
+        return "";
+      }
+
+      const vaultPath = this.getVaultPathForAbsolutePath(parsed.localPath);
+      if (vaultPath) {
+        return `${encodeMarkdownLinkPath(vaultPath)}${parsed.fragment || ""}`;
+      }
+
+      return pathToFileURL(parsed.localPath).href;
+    });
+  }
+
   getVaultAbsolutePath(vaultPath) {
     const vaultBasePath = this.getVaultBasePath();
     if (!vaultBasePath) {
@@ -7041,6 +7172,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     if (!normalizedText) {
       throw new Error("There is no assistant result to write back into the Canvas.");
     }
+    const canvasText = this.normalizeAssistantLinksForObsidian(normalizedText);
 
     return this.withSerializedCanvasMutation(canvasPath, async () => {
       const abstractFile = this.app.vault.getAbstractFileByPath(canvasPath);
@@ -7108,10 +7240,10 @@ module.exports = class OpenAgentPlugin extends Plugin {
         y: existingResultNode ? toFiniteNumber(existingResultNode.y, defaultY) : defaultY,
         width: existingResultNode ? clampNumber(toFiniteNumber(existingResultNode.width, defaultWidth), RESULT_NODE_MIN_WIDTH, RESULT_NODE_MAX_WIDTH) : defaultWidth,
         height: estimateCanvasTextNodeHeight(
-          normalizedText,
+          canvasText,
           existingResultNode ? toFiniteNumber(existingResultNode.width, defaultWidth) : defaultWidth
         ),
-        text: normalizedText,
+        text: canvasText,
         openagent: resultMetadata,
       };
 

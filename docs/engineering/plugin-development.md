@@ -110,6 +110,33 @@ timestamp.
 If you change this contract, update both the daemon normalization path and the
 plugin recovery/write-back path together.
 
+## Canvas result link normalization
+
+Codex often emits Markdown file links with full filesystem targets, such as:
+
+```md
+[main.js](/Users/me/projects/example/apps/obsidian-plugin/main.js:7040)
+```
+
+Obsidian Canvas text nodes do not treat those as internal vault links. They
+resolve internal Markdown links from the vault root, while non-vault files need
+external `file://` URLs.
+
+The plugin normalizes assistant-result links when writing the Canvas result node,
+not when rendering the side panel. The task message stays unchanged; only the
+projected Canvas node text is adapted for Obsidian.
+
+Writeback behavior:
+
+- if the absolute target maps to a file Obsidian has indexed in the vault, write
+  the link target as a vault-relative Markdown path
+- if the absolute target maps through a symlinked vault file, still write the
+  indexed vault-relative path
+- if the target is outside the vault, write it as a `file://` URL so Obsidian can
+  hand it to the operating system
+- if the target includes a Codex-style `:line` suffix, strip that suffix from the
+  destination because Obsidian does not open Markdown links by source line number
+
 ## Verification ladder
 
 Use the smallest test that gives confidence, then move up only if needed.
