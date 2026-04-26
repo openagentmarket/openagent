@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   daemonSandboxMode: "workspace-write",
   enableDebugLogging: false,
   enableDevSmokeRequests: false,
+  enableVaultPet: true,
   stopActiveTaskHotkey: "",
   workspaceRoot: "Workspaces",
 });
@@ -104,9 +105,98 @@ const DAEMON_CONNECTION_STATES = Object.freeze({
 });
 const HOTKEY_CAPTURE_INPUT_CLASS = "oa-hotkey-capture-input";
 const CANVAS_SELECTION_TRACKING_PATCH_SYMBOL = Symbol("openagentCanvasSelectionTrackingPatch");
+const VAULT_PET_WIDTH = 118;
+const VAULT_PET_HEIGHT = 142;
+const VAULT_PET_MARGIN = 14;
+const VAULT_PET_ACTIVITY_COOLDOWN_MS = 1_200;
+const VAULT_PET_IDLE_PHRASES = Object.freeze([
+  "Bloop. I live here now.",
+  "Your vault has snacks?",
+  "Eight arms, zero unread notes. Almost.",
+  "I am guarding this thought.",
+  "Tiny splash break.",
+  "Today we make the graph wiggle.",
+]);
+const VAULT_PET_ACTIVITY_PHRASES = Object.freeze({
+  create: [
+    "New note! Fresh plankton.",
+    "I saw that file hatch.",
+    "A baby idea just appeared.",
+  ],
+  modify: [
+    "Nice. The vault is breathing.",
+    "Ink deployed.",
+    "That note got juicier.",
+  ],
+  delete: [
+    "Poof. I will not ask questions.",
+    "The deep takes one back.",
+    "Clean water, clean vault.",
+  ],
+  rename: [
+    "New name, same soul.",
+    "Identity upgrade detected.",
+    "That file got a little hat.",
+  ],
+  workspace: [
+    "New room smell.",
+    "I am recalibrating my tentacles.",
+    "Different pane, same tiny ocean.",
+  ],
+  pet: [
+    "Hehe. Again.",
+    "Critical morale upgrade.",
+    "Tentacle high five.",
+    "I will remember this.",
+  ],
+});
+
+function shortHash(value) {
+  return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex").slice(0, 12);
+}
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function pickRandomItem(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "";
+  }
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function isUsableClientRect(rect) {
+  return Boolean(
+    rect
+    && Number.isFinite(rect.left)
+    && Number.isFinite(rect.top)
+    && rect.width > 0
+    && rect.height > 0
+    && rect.right >= 0
+    && rect.bottom >= 0
+    && rect.left <= window.innerWidth
+    && rect.top <= window.innerHeight
+  );
+}
+
+function combineClientRects(rects) {
+  const usableRects = Array.from(rects || []).filter(isUsableClientRect);
+  if (usableRects.length === 0) {
+    return null;
+  }
+  const left = Math.min(...usableRects.map((rect) => rect.left));
+  const top = Math.min(...usableRects.map((rect) => rect.top));
+  const right = Math.max(...usableRects.map((rect) => rect.right));
+  const bottom = Math.max(...usableRects.map((rect) => rect.bottom));
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
 }
 
 function patchObjectMethod(target, methodName, wrap) {
@@ -3912,6 +4002,547 @@ class OpenAgentView extends ItemView {
   }
 }
 
+class OpenAgentVaultPet {
+  constructor(plugin) {
+    this.plugin = plugin;
+    this.rootEl = null;
+    this.bubbleEl = null;
+    this.chatEl = null;
+    this.chatPathEl = null;
+    this.chatCwdEl = null;
+    this.chatTextareaEl = null;
+    this.chatSendButtonEl = null;
+    this.dragState = null;
+    this.chatContext = null;
+    this.chatIsSending = false;
+    this.cleanupCallbacks = [];
+    this.idleTimer = null;
+    this.messageTimer = null;
+    this.saveTimer = null;
+    this.lastActivityAt = 0;
+    this.suppressNextClick = false;
+  }
+
+  mount() {
+    if (this.rootEl) {
+      return;
+    }
+
+    const root = document.createElement("div");
+    root.className = "oa-vault-pet";
+    root.dataset.mood = "idle";
+    root.setAttribute("role", "button");
+    root.setAttribute("tabindex", "0");
+    root.setAttribute("aria-label", "Muc Muc, the OpenAgent vault octopus");
+    root.setAttribute("title", "Muc Muc");
+
+    const bubble = document.createElement("div");
+    bubble.className = "oa-vault-pet-bubble";
+    root.appendChild(bubble);
+
+    const chat = document.createElement("div");
+    chat.className = "oa-vault-pet-chat";
+    chat.setAttribute("aria-label", "Muc Muc selection chat");
+    root.appendChild(chat);
+
+    const chatHeader = document.createElement("div");
+    chatHeader.className = "oa-vault-pet-chat-header";
+    chat.appendChild(chatHeader);
+
+    const chatTitle = document.createElement("div");
+    chatTitle.className = "oa-vault-pet-chat-title";
+    chatTitle.textContent = "Muc Muc chat";
+    chatHeader.appendChild(chatTitle);
+
+    const chatCloseButton = document.createElement("button");
+    chatCloseButton.className = "oa-vault-pet-chat-close";
+    chatCloseButton.type = "button";
+    chatCloseButton.setAttribute("aria-label", "Close Muc Muc chat");
+    chatCloseButton.textContent = "x";
+    chatHeader.appendChild(chatCloseButton);
+
+    const chatPath = document.createElement("div");
+    chatPath.className = "oa-vault-pet-chat-path";
+    chat.appendChild(chatPath);
+
+    const chatCwd = document.createElement("div");
+    chatCwd.className = "oa-vault-pet-chat-cwd";
+    chat.appendChild(chatCwd);
+
+    const chatTextarea = document.createElement("textarea");
+    chatTextarea.className = "oa-vault-pet-chat-input";
+    chatTextarea.rows = 6;
+    chatTextarea.placeholder = "Ask about the selected text...";
+    chat.appendChild(chatTextarea);
+
+    const chatActions = document.createElement("div");
+    chatActions.className = "oa-vault-pet-chat-actions";
+    chat.appendChild(chatActions);
+
+    const chatHint = document.createElement("div");
+    chatHint.className = "oa-vault-pet-chat-hint";
+    chatHint.textContent = "Ctrl/Cmd Enter sends a new thread";
+    chatActions.appendChild(chatHint);
+
+    const chatSendButton = document.createElement("button");
+    chatSendButton.className = "oa-vault-pet-chat-send";
+    chatSendButton.type = "button";
+    chatSendButton.textContent = "Send";
+    chatActions.appendChild(chatSendButton);
+
+    const creature = document.createElement("div");
+    creature.className = "oa-vault-pet-creature";
+    root.appendChild(creature);
+
+    const head = document.createElement("div");
+    head.className = "oa-vault-pet-head";
+    creature.appendChild(head);
+
+    const shine = document.createElement("div");
+    shine.className = "oa-vault-pet-shine";
+    head.appendChild(shine);
+
+    const face = document.createElement("div");
+    face.className = "oa-vault-pet-face";
+    head.appendChild(face);
+
+    ["left", "right"].forEach((side) => {
+      const eye = document.createElement("div");
+      eye.className = `oa-vault-pet-eye is-${side}`;
+      const pupil = document.createElement("span");
+      eye.appendChild(pupil);
+      face.appendChild(eye);
+    });
+
+    const mouth = document.createElement("div");
+    mouth.className = "oa-vault-pet-mouth";
+    face.appendChild(mouth);
+
+    const tentacles = document.createElement("div");
+    tentacles.className = "oa-vault-pet-tentacles";
+    creature.appendChild(tentacles);
+    for (let index = 1; index <= 8; index += 1) {
+      const tentacle = document.createElement("div");
+      tentacle.className = `oa-vault-pet-tentacle t${index}`;
+      tentacles.appendChild(tentacle);
+    }
+
+    const shadow = document.createElement("div");
+    shadow.className = "oa-vault-pet-shadow";
+    root.appendChild(shadow);
+
+    document.body.appendChild(root);
+    this.rootEl = root;
+    this.bubbleEl = bubble;
+    this.chatEl = chat;
+    this.chatPathEl = chatPath;
+    this.chatCwdEl = chatCwd;
+    this.chatTextareaEl = chatTextarea;
+    this.chatSendButtonEl = chatSendButton;
+    chatCloseButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.hideChat();
+    });
+    chatSendButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.submitChat();
+    });
+    chatTextarea.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void this.submitChat();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.hideChat();
+      }
+    });
+    ["pointerdown", "pointermove", "pointerup", "click"].forEach((eventName) => {
+      chat.addEventListener(eventName, (event) => event.stopPropagation());
+    });
+    this.applyPosition(this.getStoredPosition());
+    this.bindEvents();
+    this.say(pickRandomItem(VAULT_PET_IDLE_PHRASES), {
+      mood: "idle",
+      timeoutMs: 4_800,
+    });
+    this.idleTimer = window.setInterval(() => this.tick(), 13_000);
+  }
+
+  unmount() {
+    window.clearInterval(this.idleTimer);
+    window.clearTimeout(this.messageTimer);
+    window.clearTimeout(this.saveTimer);
+    this.idleTimer = null;
+    this.messageTimer = null;
+    this.saveTimer = null;
+    this.cleanupCallbacks.forEach((cleanup) => cleanup());
+    this.cleanupCallbacks = [];
+    this.rootEl?.remove();
+    this.rootEl = null;
+    this.bubbleEl = null;
+    this.chatEl = null;
+    this.chatPathEl = null;
+    this.chatCwdEl = null;
+    this.chatTextareaEl = null;
+    this.chatSendButtonEl = null;
+    this.chatContext = null;
+    this.chatIsSending = false;
+    this.dragState = null;
+  }
+
+  bindEvents() {
+    this.addListener(this.rootEl, "pointerdown", (event) => this.handlePointerDown(event));
+    this.addListener(this.rootEl, "click", (event) => this.handleClick(event));
+    this.addListener(this.rootEl, "keydown", (event) => this.handleKeydown(event));
+    this.addListener(window, "resize", () => this.applyPosition(this.getStoredPosition()));
+    this.addListener(document, "pointermove", (event) => this.handlePointerMove(event));
+    this.addListener(document, "pointerup", (event) => this.handlePointerUp(event));
+  }
+
+  addListener(target, eventName, handler) {
+    if (!target) {
+      return;
+    }
+    target.addEventListener(eventName, handler);
+    this.cleanupCallbacks.push(() => target.removeEventListener(eventName, handler));
+  }
+
+  handlePointerDown(event) {
+    if (event.button !== 0 || !this.rootEl) {
+      return;
+    }
+    const rect = this.rootEl.getBoundingClientRect();
+    this.dragState = {
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+    this.rootEl.classList.add("is-dragging");
+    this.rootEl.setPointerCapture?.(event.pointerId);
+  }
+
+  handlePointerMove(event) {
+    if (!this.dragState || !this.rootEl) {
+      return;
+    }
+    const nextPosition = this.clampPosition({
+      x: event.clientX - this.dragState.offsetX,
+      y: event.clientY - this.dragState.offsetY,
+    });
+    if (
+      Math.abs(event.clientX - this.dragState.startX) > 3
+      || Math.abs(event.clientY - this.dragState.startY) > 3
+    ) {
+      this.dragState.moved = true;
+    }
+    this.applyPosition(nextPosition, { save: false });
+  }
+
+  handlePointerUp(event) {
+    if (!this.dragState || !this.rootEl) {
+      return;
+    }
+    const wasMoved = this.dragState.moved;
+    this.dragState = null;
+    this.rootEl.classList.remove("is-dragging");
+    this.rootEl.releasePointerCapture?.(event.pointerId);
+    this.schedulePositionSave();
+    if (wasMoved) {
+      this.suppressNextClick = true;
+      this.say("I like this spot.", {
+        mood: "curious",
+        timeoutMs: 3_200,
+      });
+    }
+  }
+
+  handleClick(event) {
+    if (this.suppressNextClick) {
+      this.suppressNextClick = false;
+      event.preventDefault();
+      return;
+    }
+    this.pet();
+  }
+
+  handleKeydown(event) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    this.pet();
+  }
+
+  tick() {
+    if (!this.rootEl || this.dragState) {
+      return;
+    }
+    if (Math.random() > 0.42) {
+      this.wander();
+    }
+    if (Math.random() > 0.35) {
+      this.say(pickRandomItem(VAULT_PET_IDLE_PHRASES), {
+        mood: "idle",
+        timeoutMs: 4_600,
+      });
+    }
+  }
+
+  wander() {
+    const current = this.getCurrentPosition();
+    const next = this.clampPosition({
+      x: current.x + Math.round((Math.random() - 0.5) * 130),
+      y: current.y + Math.round((Math.random() - 0.5) * 92),
+    });
+    this.applyPosition(next, { save: false });
+    this.rootEl?.classList.add("is-wandering");
+    window.setTimeout(() => this.rootEl?.classList.remove("is-wandering"), 850);
+    this.schedulePositionSave();
+  }
+
+  flyToRect(rect, options = {}) {
+    if (!this.rootEl || !isUsableClientRect(rect)) {
+      return false;
+    }
+    const side = rect.right + VAULT_PET_WIDTH + 24 < window.innerWidth ? "right" : "left";
+    const targetX = side === "right"
+      ? rect.right + 12
+      : rect.left - VAULT_PET_WIDTH - 12;
+    const targetY = rect.top + (rect.height / 2) - (VAULT_PET_HEIGHT * 0.58);
+    this.applyPosition({
+      x: targetX,
+      y: targetY,
+    }, { save: false });
+    this.rootEl.classList.add("is-summoned");
+    window.setTimeout(() => this.rootEl?.classList.remove("is-summoned"), 920);
+    this.schedulePositionSave();
+    this.say(options.message || "Selection spotted.", {
+      mood: "curious",
+      timeoutMs: 3_800,
+    });
+    return true;
+  }
+
+  showSelectionChat(context = {}) {
+    if (!this.rootEl || !this.chatEl || !this.chatTextareaEl) {
+      return;
+    }
+    this.chatContext = {
+      ...context,
+      selectedText: String(context.selectedText || ""),
+      filePath: String(context.filePath || ""),
+      absolutePath: String(context.absolutePath || ""),
+      cwd: String(context.cwd || ""),
+    };
+    this.chatPathEl.textContent = this.chatContext.filePath
+      ? `File: ${this.chatContext.filePath}`
+      : "File: current selection";
+    this.chatPathEl.title = this.chatContext.absolutePath || this.chatContext.filePath || "";
+    this.chatCwdEl.textContent = this.chatContext.cwd
+      ? `CWD: ${this.chatContext.cwd}`
+      : "CWD: default workspace";
+    this.chatCwdEl.title = this.chatContext.cwd || "";
+    this.chatTextareaEl.value = this.chatContext.selectedText;
+    this.chatTextareaEl.disabled = false;
+    if (this.chatSendButtonEl) {
+      this.chatSendButtonEl.disabled = false;
+      this.chatSendButtonEl.textContent = "Send";
+    }
+    const currentPosition = this.getCurrentPosition();
+    this.rootEl.classList.toggle("is-chat-right", currentPosition.x < window.innerWidth / 2);
+    this.rootEl.classList.add("has-chat");
+    window.setTimeout(() => {
+      this.chatTextareaEl?.focus();
+      this.chatTextareaEl?.select();
+    }, 80);
+  }
+
+  hideChat() {
+    this.rootEl?.classList.remove("has-chat");
+  }
+
+  async submitChat() {
+    if (this.chatIsSending || !this.chatContext || !this.chatTextareaEl) {
+      return;
+    }
+    const message = String(this.chatTextareaEl.value || "").trim();
+    if (!message) {
+      this.say("Give me words to swim with.", {
+        mood: "surprised",
+        timeoutMs: 3_000,
+      });
+      return;
+    }
+
+    this.chatIsSending = true;
+    this.chatTextareaEl.disabled = true;
+    if (this.chatSendButtonEl) {
+      this.chatSendButtonEl.disabled = true;
+      this.chatSendButtonEl.textContent = "Sending...";
+    }
+    try {
+      await this.plugin.startVaultPetSelectionChat(this.chatContext, message);
+      this.say("Thread launched.", {
+        mood: "happy",
+        timeoutMs: 3_600,
+      });
+      this.hideChat();
+    } catch (error) {
+      const messageText = String(error?.message || error || "Unable to start chat.");
+      new Notice(messageText);
+      this.say("The current got weird.", {
+        mood: "surprised",
+        timeoutMs: 3_600,
+      });
+      this.chatTextareaEl.disabled = false;
+      if (this.chatSendButtonEl) {
+        this.chatSendButtonEl.disabled = false;
+        this.chatSendButtonEl.textContent = "Send";
+      }
+    } finally {
+      this.chatIsSending = false;
+    }
+  }
+
+  pet() {
+    this.say(pickRandomItem(VAULT_PET_ACTIVITY_PHRASES.pet), {
+      mood: "happy",
+      timeoutMs: 4_200,
+    });
+    this.rootEl?.classList.add("is-petted");
+    window.setTimeout(() => this.rootEl?.classList.remove("is-petted"), 720);
+  }
+
+  handleVaultActivity(kind, file) {
+    if (!this.rootEl) {
+      return;
+    }
+    const filePath = String(file?.path || "");
+    if (!filePath || filePath.startsWith(".obsidian/plugins/openagent/")) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastActivityAt < VAULT_PET_ACTIVITY_COOLDOWN_MS) {
+      return;
+    }
+    this.lastActivityAt = now;
+    this.say(pickRandomItem(VAULT_PET_ACTIVITY_PHRASES[kind]) || "The vault moved.", {
+      mood: kind === "delete" ? "surprised" : "happy",
+      timeoutMs: 4_400,
+    });
+    this.rootEl.classList.add("is-excited");
+    window.setTimeout(() => this.rootEl?.classList.remove("is-excited"), 950);
+  }
+
+  handleWorkspaceChange() {
+    if (!this.rootEl || Date.now() - this.lastActivityAt < VAULT_PET_ACTIVITY_COOLDOWN_MS) {
+      return;
+    }
+    this.lastActivityAt = Date.now();
+    this.say(pickRandomItem(VAULT_PET_ACTIVITY_PHRASES.workspace), {
+      mood: "curious",
+      timeoutMs: 3_800,
+    });
+  }
+
+  say(message, options = {}) {
+    if (!this.rootEl || !this.bubbleEl) {
+      return;
+    }
+    const mood = String(options.mood || "idle");
+    this.rootEl.dataset.mood = mood;
+    this.bubbleEl.textContent = String(message || "Bloop.");
+    this.rootEl.classList.add("has-message");
+    window.clearTimeout(this.messageTimer);
+    this.messageTimer = window.setTimeout(() => {
+      this.rootEl?.classList.remove("has-message");
+      if (this.rootEl) {
+        this.rootEl.dataset.mood = "idle";
+      }
+    }, Number(options.timeoutMs || 4_000));
+  }
+
+  resetPosition() {
+    if (this.plugin.uiState) {
+      this.plugin.uiState.vaultPetState = {};
+    }
+    this.applyPosition(this.getDefaultPosition());
+    this.say("Back to my splash zone.", {
+      mood: "happy",
+      timeoutMs: 3_600,
+    });
+    this.schedulePositionSave();
+  }
+
+  getStoredPosition() {
+    const state = this.plugin.uiState?.vaultPetState || {};
+    const x = Number(state.x);
+    const y = Number(state.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      return this.clampPosition({ x, y });
+    }
+    return this.getDefaultPosition();
+  }
+
+  getDefaultPosition() {
+    return this.clampPosition({
+      x: window.innerWidth - VAULT_PET_WIDTH - 34,
+      y: window.innerHeight - VAULT_PET_HEIGHT - 30,
+    });
+  }
+
+  getCurrentPosition() {
+    if (!this.rootEl) {
+      return this.getDefaultPosition();
+    }
+    return this.clampPosition({
+      x: Number.parseFloat(this.rootEl.style.left) || 0,
+      y: Number.parseFloat(this.rootEl.style.top) || 0,
+    });
+  }
+
+  clampPosition(position) {
+    const maxX = Math.max(VAULT_PET_MARGIN, window.innerWidth - VAULT_PET_WIDTH - VAULT_PET_MARGIN);
+    const maxY = Math.max(VAULT_PET_MARGIN, window.innerHeight - VAULT_PET_HEIGHT - VAULT_PET_MARGIN);
+    return {
+      x: Math.min(Math.max(Number(position.x) || VAULT_PET_MARGIN, VAULT_PET_MARGIN), maxX),
+      y: Math.min(Math.max(Number(position.y) || VAULT_PET_MARGIN, VAULT_PET_MARGIN), maxY),
+    };
+  }
+
+  applyPosition(position, options = {}) {
+    if (!this.rootEl) {
+      return;
+    }
+    const next = this.clampPosition(position);
+    this.rootEl.style.left = `${next.x}px`;
+    this.rootEl.style.top = `${next.y}px`;
+    if (options.save !== false) {
+      this.schedulePositionSave();
+    }
+  }
+
+  schedulePositionSave() {
+    window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => {
+      if (!this.plugin.uiState || !this.rootEl) {
+        return;
+      }
+      const position = this.getCurrentPosition();
+      this.plugin.uiState.vaultPetState = {
+        x: Math.round(position.x),
+        y: Math.round(position.y),
+      };
+      void this.plugin.persistPluginState();
+    }, 500);
+  }
+}
+
 class OpenAgentSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -4079,6 +4710,34 @@ class OpenAgentSettingTab extends PluginSettingTab {
         });
     }
 
+    containerEl.createEl("h3", { text: "Vault pet" });
+
+    new Setting(containerEl)
+      .setName("Muc Muc the octopus")
+      .setDesc("Keep a small animated vault pet floating inside Obsidian.")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.isVaultPetEnabled())
+          .onChange(async (value) => {
+            this.plugin.settings.enableVaultPet = value === true;
+            this.plugin.configureVaultPet();
+            await this.plugin.persistPluginState();
+          });
+      })
+      .addButton((button) => {
+        button.setButtonText("Pet");
+        button.onClick(() => {
+          this.plugin.petVaultOctopus();
+        });
+      })
+      .addButton((button) => {
+        button.setButtonText("Reset spot");
+        button.onClick(async () => {
+          this.plugin.resetVaultPetPosition();
+          await this.plugin.persistPluginState();
+        });
+      });
+
     containerEl.createEl("h3", { text: "Developer options" });
 
     new Setting(containerEl)
@@ -4197,6 +4856,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         ?? savedState.unreadTaskStateById
         ?? {}
       ),
+      vaultPetState: savedState.uiState?.vaultPetState ?? {},
     };
     const savedSyncState = savedState.syncState || {};
     this.daemonLauncher = new OpenAgentDaemonLauncher(this);
@@ -4258,11 +4918,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
     };
     this.selectedGroupContextPreviewLoadPromise = null;
     this.liveCanvasNodeTextByKey = new Map();
+    this.vaultPet = null;
 
     this.registerView(VIEW_TYPE, (leaf) => new OpenAgentView(leaf, this));
     this.registerCanvasEditorTrackingExtension();
     this.settingTab = new OpenAgentSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
+    this.configureVaultPet();
     this.configureDevSmokePolling();
     this.registerInterval(window.setInterval(() => {
       void this.refreshDaemonStatus({
@@ -4273,21 +4935,25 @@ module.exports = class OpenAgentPlugin extends Plugin {
       this.handleWorkspaceConfigMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
+      this.handleVaultPetActivity("create", file);
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
       this.handleWorkspaceConfigMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
+      this.handleVaultPetActivity("modify", file);
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       this.handleWorkspaceConfigMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
+      this.handleVaultPetActivity("delete", file);
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
       this.handleWorkspaceConfigMutation(file, oldPath);
       this.handleSelectedGroupContextDependencyMutation(file, oldPath);
       this.handleCanvasFileMutation(file);
+      this.handleVaultPetActivity("rename", file);
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
       this.ensureCanvasPopupMenuPatches();
@@ -4300,6 +4966,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       this.syncActiveTaskToCanvasContext({ markReadOnSelection: true });
       void this.refreshSelectedGroupContextPreview();
       this.requestViewRefresh();
+      this.handleVaultPetWorkspaceChange();
     }));
     this.registerEvent(this.app.workspace.on("layout-change", () => {
       this.ensureCanvasPopupMenuPatches();
@@ -4384,6 +5051,36 @@ module.exports = class OpenAgentPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "openagent-toggle-vault-pet",
+      name: "Toggle vault octopus",
+      callback: () => {
+        void this.toggleVaultPet();
+      },
+    });
+
+    this.addCommand({
+      id: "openagent-pet-vault-octopus",
+      name: "Pet vault octopus",
+      callback: () => {
+        this.petVaultOctopus();
+      },
+    });
+
+    this.addCommand({
+      id: "openagent-summon-vault-octopus-to-selection",
+      name: "Summon vault octopus to selection",
+      hotkeys: [
+        {
+          modifiers: ["Ctrl"],
+          key: "r",
+        },
+      ],
+      callback: () => {
+        this.summonVaultPetToSelection();
+      },
+    });
+
     this.app.workspace.onLayoutReady(() => {
       this.ensureCanvasPopupMenuPatches();
       this.ensureCanvasSelectionTrackingPatches();
@@ -4402,6 +5099,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.disposeActiveStream();
     this.disposeAllRunningTaskStreams();
     this.restoreCanvasPopupMenuPatches();
+    this.vaultPet?.unmount();
+    this.vaultPet = null;
     try {
       await this.persistPluginState();
     } catch {
@@ -4419,6 +5118,297 @@ module.exports = class OpenAgentPlugin extends Plugin {
         canvasRunSourceRefByTaskId: this.canvasRunSourceRefByTaskId,
       },
     });
+  }
+
+  isVaultPetEnabled() {
+    return this.settings?.enableVaultPet !== false;
+  }
+
+  configureVaultPet() {
+    if (!this.isVaultPetEnabled()) {
+      this.vaultPet?.unmount();
+      this.vaultPet = null;
+      return;
+    }
+    if (!this.vaultPet) {
+      this.vaultPet = new OpenAgentVaultPet(this);
+    }
+    this.vaultPet.mount();
+  }
+
+  async toggleVaultPet() {
+    this.settings.enableVaultPet = !this.isVaultPetEnabled();
+    this.configureVaultPet();
+    await this.persistPluginState();
+    new Notice(this.isVaultPetEnabled() ? "Muc Muc is awake." : "Muc Muc is napping.");
+    this.settingTab?.display();
+  }
+
+  petVaultOctopus() {
+    if (!this.isVaultPetEnabled()) {
+      this.settings.enableVaultPet = true;
+      this.configureVaultPet();
+      void this.persistPluginState();
+    }
+    this.vaultPet?.pet();
+  }
+
+  summonVaultPetToSelection() {
+    if (!this.isVaultPetEnabled()) {
+      this.settings.enableVaultPet = true;
+      this.configureVaultPet();
+      void this.persistPluginState();
+    } else {
+      this.configureVaultPet();
+    }
+
+    const chatContext = this.getActiveMarkdownSelectionChatContext();
+    const selectionRect = this.getActiveSelectionClientRect();
+    if (!selectionRect || !chatContext?.selectedText) {
+      new Notice("Select some text first, then summon Muc Muc.");
+      this.vaultPet?.say("Point me at some text.", {
+        mood: "surprised",
+        timeoutMs: 3_400,
+      });
+      return;
+    }
+
+    const didFly = this.vaultPet?.flyToRect(selectionRect, {
+      message: "I found the thought.",
+    });
+    this.vaultPet?.showSelectionChat(chatContext);
+    if (!didFly) {
+      new Notice("Muc Muc could not find a visible selection.");
+    }
+  }
+
+  getActiveMarkdownSelectionChatContext() {
+    const file = this.app.workspace.activeLeaf?.view?.file || this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile)) {
+      return null;
+    }
+    const selectedText = this.getActiveSelectedText();
+    if (!selectedText.trim()) {
+      return null;
+    }
+
+    const vaultBasePath = this.getVaultBasePath();
+    const absolutePath = vaultBasePath ? path.resolve(vaultBasePath, file.path) : "";
+    const selectionContext = this.buildVaultPetSelectionContext({
+      file,
+      selectedText,
+      absolutePath,
+    });
+    const cwd = this.getDefaultCwdForVaultPetSelection(file.path, selectionContext);
+    return {
+      filePath: file.path,
+      fileName: file.basename || file.name || basenameVaultPath(file.path),
+      absolutePath,
+      selectedText,
+      cwd,
+      selectionContext,
+    };
+  }
+
+  getActiveSelectedText() {
+    const activeViewContainer = this.app.workspace.activeLeaf?.view?.containerEl;
+    const nativeSelection = document.getSelection?.();
+    if (nativeSelection && !nativeSelection.isCollapsed) {
+      const selectedText = String(nativeSelection.toString() || "");
+      if (selectedText.trim()) {
+        const anchorNode = nativeSelection.anchorNode;
+        const focusNode = nativeSelection.focusNode;
+        const anchorElement = anchorNode?.nodeType === Node.ELEMENT_NODE ? anchorNode : anchorNode?.parentElement;
+        const focusElement = focusNode?.nodeType === Node.ELEMENT_NODE ? focusNode : focusNode?.parentElement;
+        if (
+          !activeViewContainer
+          || (anchorElement && activeViewContainer.contains(anchorElement))
+          || (focusElement && activeViewContainer.contains(focusElement))
+        ) {
+          return selectedText;
+        }
+      }
+    }
+
+    const editorSelection = this.app.workspace.activeLeaf?.view?.editor?.getSelection?.();
+    return String(editorSelection || "");
+  }
+
+  buildVaultPetSelectionContext({ file, selectedText, absolutePath }) {
+    const filePath = String(file?.path || "").trim();
+    const selectionText = String(selectedText || "").trim();
+    const selectionId = `vault-pet-${shortHash(`${filePath}\n${selectionText}\n${Date.now()}`)}`;
+    return {
+      canvasPath: filePath,
+      canvasName: file?.basename || file?.name || basenameVaultPath(filePath),
+      nodeIds: [selectionId],
+      textBlocks: [
+        {
+          id: selectionId,
+          text: selectionText,
+        },
+      ],
+      markdownFiles: [
+        {
+          id: `file-${shortHash(filePath)}`,
+          path: filePath,
+          absolutePath: String(absolutePath || ""),
+          name: file?.name || basenameVaultPath(filePath),
+          content: "",
+        },
+      ],
+      imageFiles: [],
+      warnings: [],
+      title: `${file?.basename || basenameVaultPath(filePath) || "Markdown"} selection`,
+    };
+  }
+
+  getDefaultCwdForVaultPetSelection(filePath, selectionContext) {
+    const workspace = this.getWorkspaceForVaultPath(filePath);
+    return workspace?.repoPath
+      || this.resolveWorkspaceRepoPathForSelection(selectionContext)
+      || this.resolver.inferWorkingDirectory(selectionContext)
+      || this.getVaultBasePath();
+  }
+
+  buildVaultPetChatPrompt(context = {}, message = "") {
+    const filePath = String(context.filePath || "").trim();
+    const absolutePath = String(context.absolutePath || "").trim();
+    const selectedText = String(context.selectedText || "").trim();
+    const userMessage = String(message || "").trim();
+    return [
+      "You are chatting from an Obsidian Markdown text selection.",
+      filePath ? `Vault file path: ${filePath}` : "",
+      absolutePath ? `Absolute file path: ${absolutePath}` : "",
+      "Use the selected text as the primary context for this new thread.",
+      selectedText
+        ? `Selected text:\n\`\`\`md\n${selectedText}\n\`\`\``
+        : "",
+      userMessage
+        ? `User message:\n${userMessage}`
+        : "",
+    ].filter(Boolean).join("\n\n").trim();
+  }
+
+  async startVaultPetSelectionChat(context = {}, message = "") {
+    const selectionContext = context.selectionContext || this.buildVaultPetSelectionContext({
+      file: this.app.workspace.getActiveFile(),
+      selectedText: context.selectedText,
+      absolutePath: context.absolutePath,
+    });
+    const cwd = String(context.cwd || "").trim()
+      || this.getDefaultCwdForVaultPetSelection(context.filePath, selectionContext);
+    const rawPrompt = this.buildVaultPetChatPrompt(context, message);
+    if (!rawPrompt) {
+      throw new Error("Write a chat message first.");
+    }
+
+    await this.activateView();
+    const response = await this.api.createTaskFromCanvasSelection({
+      ...selectionContext,
+      cwd,
+      forceNewTask: true,
+      runtimeConfig: this.buildRuntimeConfigPayload(),
+    });
+    const task = this.mergeTask(response.task);
+    this.runtimeIssue = "";
+    await this.setActiveTask(task.taskId, { revealInActiveTab: true });
+
+    if (!task.cwd) {
+      new Notice("Set a working directory in the OpenAgent panel to continue.");
+      return task;
+    }
+
+    new Notice("Starting a new OpenAgent thread from this selection.");
+    await this.api.runTask(task.taskId, {
+      rawPrompt,
+      transcriptMessage: String(message || "").trim() || rawPrompt,
+      forceContext: false,
+      runtimeConfig: this.buildRuntimeConfigPayload(),
+    });
+    await this.refreshTask(task.taskId);
+    return this.tasksById[task.taskId] || task;
+  }
+
+  getActiveSelectionClientRect() {
+    return this.getNativeSelectionClientRect()
+      || this.getCodeMirrorSelectionClientRect()
+      || this.getFocusedElementClientRect();
+  }
+
+  getNativeSelectionClientRect() {
+    const selection = document.getSelection?.();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return null;
+    }
+    const activeViewContainer = this.app.workspace.activeLeaf?.view?.containerEl;
+    const rects = [];
+    for (let index = 0; index < selection.rangeCount; index += 1) {
+      const range = selection.getRangeAt(index);
+      if (
+        activeViewContainer
+        && range.commonAncestorContainer
+        && !activeViewContainer.contains(
+          range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+            ? range.commonAncestorContainer
+            : range.commonAncestorContainer.parentElement
+        )
+      ) {
+        continue;
+      }
+      rects.push(...Array.from(range.getClientRects()));
+      const boundingRect = range.getBoundingClientRect();
+      if (isUsableClientRect(boundingRect)) {
+        rects.push(boundingRect);
+      }
+    }
+    return combineClientRects(rects);
+  }
+
+  getCodeMirrorSelectionClientRect() {
+    const activeViewContainer = this.app.workspace.activeLeaf?.view?.containerEl;
+    if (!activeViewContainer) {
+      return null;
+    }
+    return combineClientRects(
+      Array.from(activeViewContainer.querySelectorAll(".cm-selectionBackground"))
+        .map((element) => element.getBoundingClientRect())
+    );
+  }
+
+  getFocusedElementClientRect() {
+    const activeViewContainer = this.app.workspace.activeLeaf?.view?.containerEl;
+    const activeElement = document.activeElement;
+    if (!activeViewContainer || !activeElement || !activeViewContainer.contains(activeElement)) {
+      return null;
+    }
+    const rect = activeElement.getBoundingClientRect();
+    return isUsableClientRect(rect) ? rect : null;
+  }
+
+  resetVaultPetPosition() {
+    if (!this.uiState) {
+      return;
+    }
+    this.uiState.vaultPetState = {};
+    if (!this.vaultPet && this.isVaultPetEnabled()) {
+      this.configureVaultPet();
+    }
+    this.vaultPet?.resetPosition();
+  }
+
+  handleVaultPetActivity(kind, file) {
+    if (!this.isVaultPetEnabled()) {
+      return;
+    }
+    this.vaultPet?.handleVaultActivity(kind, file);
+  }
+
+  handleVaultPetWorkspaceChange() {
+    if (!this.isVaultPetEnabled()) {
+      return;
+    }
+    this.vaultPet?.handleWorkspaceChange();
   }
 
   ensureCanvasPopupMenuPatches() {

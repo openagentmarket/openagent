@@ -71,6 +71,12 @@ Read:
 - [OpenAgent User Guide](./getting-started/user-guide.md#5-continue-with-a-follow-up)
 - [Canvas Branching](./concepts/canvas-branching.md)
 
+### If you are curious about the octopus
+
+Read:
+
+- [Vault Pet](./concepts/vault-pet.md)
+
 ### If something feels broken
 
 Read:
