@@ -3449,6 +3449,10 @@ class OpenAgentView extends ItemView {
   }
 
   getSettingsTaskTab() {
+    if (this.settingsTaskTab === "all") {
+      return "all";
+    }
+
     if (this.settingsTaskTab === "archived") {
       return "archived";
     }
@@ -3457,9 +3461,11 @@ class OpenAgentView extends ItemView {
   }
 
   setSettingsTaskTab(tab) {
-    const nextTab = tab === "archived"
-      ? "archived"
-      : (tab === "running" ? "running" : "recent");
+    const nextTab = tab === "all"
+      ? "all"
+      : (tab === "archived"
+        ? "archived"
+        : (tab === "running" ? "running" : "recent"));
     if (this.settingsTaskTab === nextTab) {
       return;
     }
@@ -3814,6 +3820,7 @@ class OpenAgentView extends ItemView {
       const settingsTaskTab = this.getSettingsTaskTab();
       [
         { id: "recent", label: "Recent" },
+        { id: "all", label: "All" },
         { id: "running", label: "Running" },
         { id: "archived", label: "Archived" },
       ].forEach((tab) => {
@@ -3829,27 +3836,32 @@ class OpenAgentView extends ItemView {
       });
 
       const threadSection = threadsBlock.createDiv({ cls: "oa-task-section oa-settings-task-section" });
-      const displayedTasks = settingsTaskTab === "archived"
-        ? archivedTasks
-        : (settingsTaskTab === "running" ? runningTasks : tasks);
+      const allTasks = this.plugin.getTasks();
+      const displayedTasks = settingsTaskTab === "all"
+        ? allTasks
+        : (settingsTaskTab === "archived"
+          ? archivedTasks
+          : (settingsTaskTab === "running" ? runningTasks : tasks));
       const taskListKey = [
         "workspace-settings",
         settingsTaskTab,
-        activeCanvasPath || "",
-        activeWorkspace?.repoPath || "",
+        settingsTaskTab === "all" ? "all" : (activeCanvasPath || ""),
+        settingsTaskTab === "all" ? "" : (activeWorkspace?.repoPath || ""),
       ].join(":");
       this.renderTaskList(threadSection, displayedTasks, {
         emptyText: settingsTaskTab === "archived"
           ? (activeCanvasPath
             ? "No archived thread yet for this canvas."
             : "No archived task yet.")
-          : (settingsTaskTab === "running"
-            ? (activeCanvasPath
-              ? "No running thread for this canvas."
-              : "No running task right now.")
-            : (activeCanvasPath
-              ? "No thread yet for this canvas. Select a node and start one."
-              : "Open a Canvas and select a text node to work with its thread.")),
+          : (settingsTaskTab === "all"
+            ? "No OpenAgent threads yet."
+            : (settingsTaskTab === "running"
+              ? (activeCanvasPath
+                ? "No running thread for this canvas."
+                : "No running task right now.")
+              : (activeCanvasPath
+                ? "No thread yet for this canvas. Select a node and start one."
+                : "Open a Canvas and select a text node to work with its thread."))),
         listKey: taskListKey,
         activeTask,
       });
@@ -4035,8 +4047,8 @@ class OpenAgentVaultPet {
     root.dataset.mood = "idle";
     root.setAttribute("role", "button");
     root.setAttribute("tabindex", "0");
-    root.setAttribute("aria-label", "Muc Muc, the OpenAgent vault mascot");
-    root.setAttribute("title", "Muc Muc");
+    root.setAttribute("aria-label", "OpenAgent vault pet");
+    root.setAttribute("title", "OpenAgent vault pet");
 
     const bubble = document.createElement("div");
     bubble.className = "oa-vault-pet-bubble";
@@ -4044,7 +4056,7 @@ class OpenAgentVaultPet {
 
     const chat = document.createElement("div");
     chat.className = "oa-vault-pet-chat";
-    chat.setAttribute("aria-label", "Muc Muc selection chat");
+    chat.setAttribute("aria-label", "Vault pet selection chat");
     root.appendChild(chat);
 
     const chatHeader = document.createElement("div");
@@ -4053,13 +4065,13 @@ class OpenAgentVaultPet {
 
     const chatTitle = document.createElement("div");
     chatTitle.className = "oa-vault-pet-chat-title";
-    chatTitle.textContent = "Muc Muc chat";
+    chatTitle.textContent = "Vault pet chat";
     chatHeader.appendChild(chatTitle);
 
     const chatCloseButton = document.createElement("button");
     chatCloseButton.className = "oa-vault-pet-chat-close";
     chatCloseButton.type = "button";
-    chatCloseButton.setAttribute("aria-label", "Close Muc Muc chat");
+    chatCloseButton.setAttribute("aria-label", "Close vault pet chat");
     chatCloseButton.textContent = "x";
     chatHeader.appendChild(chatCloseButton);
 
@@ -4074,7 +4086,7 @@ class OpenAgentVaultPet {
     const chatTextarea = document.createElement("textarea");
     chatTextarea.className = "oa-vault-pet-chat-input";
     chatTextarea.rows = 6;
-    chatTextarea.placeholder = "Ask about the selected text...";
+    chatTextarea.placeholder = "Chat or search from here...";
     chat.appendChild(chatTextarea);
 
     const chatActions = document.createElement("div");
@@ -4243,7 +4255,7 @@ class OpenAgentVaultPet {
       event.preventDefault();
       return;
     }
-    this.pet();
+    this.showQuickChat();
   }
 
   handleKeydown(event) {
@@ -4251,7 +4263,7 @@ class OpenAgentVaultPet {
       return;
     }
     event.preventDefault();
-    this.pet();
+    this.showQuickChat();
   }
 
   tick() {
@@ -4324,6 +4336,7 @@ class OpenAgentVaultPet {
       : "CWD: default workspace";
     this.chatCwdEl.title = this.chatContext.cwd || "";
     this.chatTextareaEl.value = this.chatContext.selectedText;
+    this.chatTextareaEl.placeholder = "Ask about the selected text...";
     this.chatTextareaEl.disabled = false;
     if (this.chatSendButtonEl) {
       this.chatSendButtonEl.disabled = false;
@@ -4335,6 +4348,39 @@ class OpenAgentVaultPet {
     window.setTimeout(() => {
       this.chatTextareaEl?.focus();
       this.chatTextareaEl?.select();
+    }, 80);
+  }
+
+  showQuickChat() {
+    if (!this.rootEl || !this.chatEl || !this.chatTextareaEl) {
+      return;
+    }
+    const context = this.plugin.getVaultPetQuickChatContext();
+    this.chatContext = context;
+    this.chatPathEl.textContent = context.filePath
+      ? `File: ${context.filePath}`
+      : "File: current vault";
+    this.chatPathEl.title = context.absolutePath || context.filePath || "";
+    this.chatCwdEl.textContent = context.cwd
+      ? `CWD: ${context.cwd}`
+      : "CWD: default workspace";
+    this.chatCwdEl.title = context.cwd || "";
+    this.chatTextareaEl.value = "";
+    this.chatTextareaEl.placeholder = "Chat or search from here...";
+    this.chatTextareaEl.disabled = false;
+    if (this.chatSendButtonEl) {
+      this.chatSendButtonEl.disabled = false;
+      this.chatSendButtonEl.textContent = "Send";
+    }
+    const currentPosition = this.getCurrentPosition();
+    this.rootEl.classList.toggle("is-chat-right", currentPosition.x < window.innerWidth / 2);
+    this.rootEl.classList.add("has-chat");
+    this.say("Ready.", {
+      mood: "curious",
+      timeoutMs: 1_400,
+    });
+    window.setTimeout(() => {
+      this.chatTextareaEl?.focus();
     }, 80);
   }
 
@@ -4362,7 +4408,7 @@ class OpenAgentVaultPet {
       this.chatSendButtonEl.textContent = "Sending...";
     }
     try {
-      await this.plugin.startVaultPetSelectionChat(this.chatContext, message);
+      await this.plugin.startVaultPetChat(this.chatContext, message);
       this.say("Thread launched.", {
         mood: "happy",
         timeoutMs: 3_600,
@@ -4689,7 +4735,7 @@ class OpenAgentSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Vault pet" });
 
     new Setting(containerEl)
-      .setName("Muc Muc mascot")
+      .setName("Vault pet mascot")
       .setDesc("Keep a small animated vault pet floating inside Obsidian.")
       .addToggle((toggle) => {
         toggle
@@ -5038,7 +5084,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.addCommand({
       id: "openagent-pet-vault-octopus",
-      name: "Pet Muc Muc",
+      name: "Pet vault mascot",
       callback: () => {
         this.petVaultOctopus();
       },
@@ -5046,7 +5092,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.addCommand({
       id: "openagent-summon-vault-octopus-to-selection",
-      name: "Summon Muc Muc to selection",
+      name: "Summon vault mascot to selection",
       hotkeys: [
         {
           modifiers: ["Ctrl"],
@@ -5117,7 +5163,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.settings.enableVaultPet = !this.isVaultPetEnabled();
     this.configureVaultPet();
     await this.persistPluginState();
-    new Notice(this.isVaultPetEnabled() ? "Muc Muc is awake." : "Muc Muc is napping.");
+    new Notice(this.isVaultPetEnabled() ? "Vault pet is awake." : "Vault pet is napping.");
     this.settingTab?.display();
   }
 
@@ -5142,7 +5188,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     const chatContext = this.getActiveMarkdownSelectionChatContext();
     const selectionRect = this.getActiveSelectionClientRect();
     if (!selectionRect || !chatContext?.selectedText) {
-      new Notice("Select some text first, then summon Muc Muc.");
+      new Notice("Select some text first, then summon the vault pet.");
       this.vaultPet?.say("Point me at some text.", {
         mood: "surprised",
         timeoutMs: 3_400,
@@ -5155,7 +5201,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
     this.vaultPet?.showSelectionChat(chatContext);
     if (!didFly) {
-      new Notice("Muc Muc could not find a visible selection.");
+      new Notice("Vault pet could not find a visible selection.");
     }
   }
 
@@ -5248,37 +5294,79 @@ module.exports = class OpenAgentPlugin extends Plugin {
       || this.getVaultBasePath();
   }
 
-  buildVaultPetChatPrompt(context = {}, message = "") {
-    const filePath = String(context.filePath || "").trim();
-    const absolutePath = String(context.absolutePath || "").trim();
-    const selectedText = String(context.selectedText || "").trim();
-    const userMessage = String(message || "").trim();
-    return [
-      "You are chatting from an Obsidian Markdown text selection.",
-      filePath ? `Vault file path: ${filePath}` : "",
-      absolutePath ? `Absolute file path: ${absolutePath}` : "",
-      "Use the selected text as the primary context for this new thread.",
-      selectedText
-        ? `Selected text:\n\`\`\`md\n${selectedText}\n\`\`\``
-        : "",
-      userMessage
-        ? `User message:\n${userMessage}`
-        : "",
-    ].filter(Boolean).join("\n\n").trim();
+  getVaultPetQuickChatContext() {
+    const file = this.app.workspace.activeLeaf?.view?.file || this.app.workspace.getActiveFile();
+    const filePath = file instanceof TFile ? String(file.path || "").trim() : "";
+    const vaultBasePath = this.getVaultBasePath();
+    const absolutePath = filePath && vaultBasePath ? path.resolve(vaultBasePath, filePath) : "";
+    const selectionContext = this.buildVaultPetQuickChatSelectionContext({
+      file,
+      filePath,
+      absolutePath,
+    });
+    const cwd = this.getDefaultCwdForVaultPetSelection(filePath, selectionContext);
+    return {
+      mode: "quick",
+      filePath,
+      fileName: file instanceof TFile ? (file.basename || file.name || basenameVaultPath(filePath)) : "",
+      absolutePath,
+      selectedText: "",
+      cwd,
+      selectionContext,
+    };
+  }
+
+  buildVaultPetQuickChatSelectionContext({ file, filePath, absolutePath }) {
+    const normalizedFilePath = String(filePath || "").trim();
+    const baseTitle = file instanceof TFile
+      ? (file.basename || basenameVaultPath(normalizedFilePath) || "Vault")
+      : "Vault";
+    const nodeId = `vault-pet-quick-${shortHash(`${normalizedFilePath}\n${Date.now()}`)}`;
+    const text = normalizedFilePath
+      ? `Quick chat from active file: ${normalizedFilePath}`
+      : "Quick chat from Obsidian vault.";
+    return {
+      canvasPath: normalizedFilePath || "vault-pet/quick-chat",
+      canvasName: baseTitle,
+      nodeIds: [nodeId],
+      textBlocks: [
+        {
+          id: nodeId,
+          text,
+        },
+      ],
+      markdownFiles: normalizedFilePath
+        ? [
+            {
+              id: `file-${shortHash(normalizedFilePath)}`,
+              path: normalizedFilePath,
+              absolutePath: String(absolutePath || ""),
+              name: file?.name || basenameVaultPath(normalizedFilePath),
+              content: "",
+            },
+          ]
+        : [],
+      imageFiles: [],
+      warnings: [],
+      title: normalizedFilePath ? `${baseTitle} quick chat` : "Vault pet quick chat",
+    };
+  }
+
+  async startVaultPetChat(context = {}, message = "") {
+    return this.startVaultPetSelectionChat(context, message);
   }
 
   async startVaultPetSelectionChat(context = {}, message = "") {
-    const selectionContext = context.selectionContext || this.buildVaultPetSelectionContext({
-      file: this.app.workspace.getActiveFile(),
-      selectedText: context.selectedText,
-      absolutePath: context.absolutePath,
-    });
-    const cwd = String(context.cwd || "").trim()
-      || this.getDefaultCwdForVaultPetSelection(context.filePath, selectionContext);
-    const rawPrompt = this.buildVaultPetChatPrompt(context, message);
+    const rawPrompt = String(message || "").trim();
     if (!rawPrompt) {
       throw new Error("Write a chat message first.");
     }
+    const materialized = await this.materializeVaultPetChatOnCanvas(context, {
+      message,
+      rawPrompt,
+    });
+    const selectionContext = materialized.selectionContext;
+    const cwd = materialized.cwd;
 
     await this.activateView();
     const response = await this.api.createTaskFromCanvasSelection({
@@ -5304,7 +5392,115 @@ module.exports = class OpenAgentPlugin extends Plugin {
       runtimeConfig: this.buildRuntimeConfigPayload(),
     });
     await this.refreshTask(task.taskId);
+    void this.revealCanvasNode(selectionContext.canvasPath, selectionContext.nodeIds?.[0] || "");
     return this.tasksById[task.taskId] || task;
+  }
+
+  async materializeVaultPetChatOnCanvas(context = {}, options = {}) {
+    const rawPrompt = String(options.rawPrompt || "").trim();
+    const message = String(options.message || "").trim();
+    const sourceSelection = context.selectionContext || this.buildVaultPetSelectionContext({
+      file: this.app.workspace.getActiveFile(),
+      selectedText: context.selectedText,
+      absolutePath: context.absolutePath,
+    });
+    const requestedCwd = String(context.cwd || "").trim()
+      || this.getDefaultCwdForVaultPetSelection(context.filePath, sourceSelection);
+    const cwd = normalizeRepoPath(requestedCwd || this.getVaultBasePath());
+    const workspace = await this.ensureWorkspaceForRepoPath(cwd, path.basename(cwd || "Vault"));
+    const canvasPath = joinVaultPath(workspace.folderPath, workspace.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE);
+    const sourceFilePath = String(context.filePath || "").trim();
+    const absolutePath = String(context.absolutePath || "").trim();
+    const title = context.mode === "quick"
+      ? "Vault pet quick chat"
+      : "Vault pet selection chat";
+    const displayText = String(message || "").trim();
+    const node = await this.appendVaultPetPromptNodeToCanvas(canvasPath, {
+      title,
+      text: displayText,
+    });
+    const markdownFiles = sourceFilePath
+      ? [
+          {
+            id: `file-${shortHash(sourceFilePath)}`,
+            path: sourceFilePath,
+            absolutePath,
+            name: context.fileName || basenameVaultPath(sourceFilePath),
+            content: "",
+          },
+        ]
+      : [];
+
+    return {
+      cwd: workspace.repoPath,
+      selectionContext: {
+        canvasPath,
+        canvasName: basenameVaultPath(canvasPath).replace(/\.canvas$/i, ""),
+        nodeIds: [node.id],
+        textBlocks: [
+          {
+            id: node.id,
+            text: rawPrompt || displayText,
+          },
+        ],
+        markdownFiles,
+        imageFiles: [],
+        warnings: [],
+        title: displayText.slice(0, 80) || title,
+      },
+    };
+  }
+
+  async appendVaultPetPromptNodeToCanvas(canvasPath, options = {}) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    if (!normalizedCanvasPath) {
+      throw new Error("Vault pet chat is missing a target Canvas.");
+    }
+
+    return this.withSerializedCanvasMutation(normalizedCanvasPath, async () => {
+      const abstractFile = this.app.vault.getAbstractFileByPath(normalizedCanvasPath);
+      if (!(abstractFile instanceof TFile) || abstractFile.extension !== "canvas") {
+        throw new Error(`Canvas file not found: ${normalizedCanvasPath}`);
+      }
+
+      const raw = await this.app.vault.cachedRead(abstractFile);
+      let parsed;
+      try {
+        parsed = raw.trim() ? JSON.parse(raw) : { nodes: [], edges: [] };
+      } catch {
+        throw new Error(`Unable to parse canvas JSON for ${normalizedCanvasPath}`);
+      }
+
+      const nodes = Array.isArray(parsed?.nodes) ? [...parsed.nodes] : [];
+      const edges = Array.isArray(parsed?.edges) ? [...parsed.edges] : [];
+      const text = String(options.text || "").trim() || "Vault pet chat";
+      const width = RESULT_NODE_DEFAULT_WIDTH;
+      const height = FOLLOW_UP_NODE_DEFAULT_HEIGHT;
+      const maxBottom = nodes.reduce((maxValue, node) => {
+        const nodeY = toFiniteNumber(node?.y, 80);
+        const nodeHeight = toFiniteNumber(node?.height, FOLLOW_UP_NODE_DEFAULT_HEIGHT);
+        return Math.max(maxValue, nodeY + nodeHeight);
+      }, CANVAS_LAYOUT_BASE_Y - RESULT_NODE_Y_GAP);
+      const node = {
+        id: createCanvasObjectId("oa-pet-chat"),
+        type: "text",
+        x: 80,
+        y: maxBottom + RESULT_NODE_Y_GAP,
+        width,
+        height,
+        text,
+      };
+      nodes.push(node);
+
+      const nextParsed = {
+        ...parsed,
+        nodes,
+        edges,
+      };
+      await this.app.vault.modify(abstractFile, JSON.stringify(nextParsed, null, 2) + "\n");
+      this.primeCanvasSnapshot(normalizedCanvasPath, nextParsed);
+      return node;
+    });
   }
 
   getActiveSelectionClientRect() {
@@ -6333,6 +6529,40 @@ module.exports = class OpenAgentPlugin extends Plugin {
     await this.ensureWorkspaceSummariesLoaded({ force: true });
     await this.openWorkspace(workspace);
     new Notice(`Created workspace: ${workspace.name}`);
+    return workspace;
+  }
+
+  async ensureWorkspaceForRepoPath(repoPathInput, workspaceNameInput = "") {
+    const repoPath = normalizeRepoPath(repoPathInput);
+    if (!repoPath) {
+      throw new Error("OpenAgent could not infer a working directory for this chat.");
+    }
+    if (!fs.existsSync(repoPath) || !fs.statSync(repoPath).isDirectory()) {
+      throw new Error(`Working directory does not exist: ${repoPath}`);
+    }
+
+    await this.ensureWorkspaceSummariesLoaded();
+    const existing = this.listWorkspaceSummaries().find((workspace) => workspace.repoPath === repoPath);
+    if (existing) {
+      return existing;
+    }
+
+    const repoWorkspace = this.ensureRepoWorkspaceFiles(repoPath, workspaceNameInput);
+    const { folderPath } = await this.ensureWorkspaceSymlink(repoWorkspace.folderPath, repoWorkspace.name);
+    const workspace = {
+      configPath: joinVaultPath(folderPath, WORKSPACE_CONFIG_FILE_NAME),
+      folderPath,
+      name: repoWorkspace.name,
+      repoPath: repoWorkspace.repoPath,
+      defaultCanvas: repoWorkspace.defaultCanvas,
+    };
+
+    const canvasFile = await this.waitForWorkspaceCanvasFile(workspace.folderPath, workspace.defaultCanvas);
+    if (!canvasFile) {
+      throw new Error(`OpenAgent created a workspace canvas, but Obsidian has not indexed it yet: ${workspace.defaultCanvas}`);
+    }
+
+    await this.ensureWorkspaceSummariesLoaded({ force: true });
     return workspace;
   }
 
