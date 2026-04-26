@@ -33,6 +33,8 @@ const DAEMON_CONFIG_PATH = path.join(os.homedir(), ".openagent", "daemon-config.
 const DAEMON_LOG_PATH = path.join(os.homedir(), ".openagent", "daemon.log");
 const PLUGIN_LOGO_FILE_NAME = "logo.png";
 const PLUGIN_LOGO_PATH = path.join(__dirname, PLUGIN_LOGO_FILE_NAME);
+const VAULT_PET_MASCOT_FILE_NAME = "vault-pet-mascot.png";
+const VAULT_PET_MASCOT_PATH = path.join(__dirname, VAULT_PET_MASCOT_FILE_NAME);
 const DEFAULT_SETTINGS = Object.freeze({
   daemonLaunchCommand: "",
   daemonLaunchCwd: "",
@@ -112,7 +114,7 @@ const VAULT_PET_ACTIVITY_COOLDOWN_MS = 1_200;
 const VAULT_PET_IDLE_PHRASES = Object.freeze([
   "Bloop. I live here now.",
   "Your vault has snacks?",
-  "Eight arms, zero unread notes. Almost.",
+  "One badge, many thoughts.",
   "I am guarding this thought.",
   "Tiny splash break.",
   "Today we make the graph wiggle.",
@@ -140,7 +142,7 @@ const VAULT_PET_ACTIVITY_PHRASES = Object.freeze({
   ],
   workspace: [
     "New room smell.",
-    "I am recalibrating my tentacles.",
+    "I am recalibrating my halo.",
     "Different pane, same tiny ocean.",
   ],
   pet: [
@@ -4033,7 +4035,7 @@ class OpenAgentVaultPet {
     root.dataset.mood = "idle";
     root.setAttribute("role", "button");
     root.setAttribute("tabindex", "0");
-    root.setAttribute("aria-label", "Muc Muc, the OpenAgent vault octopus");
+    root.setAttribute("aria-label", "Muc Muc, the OpenAgent vault mascot");
     root.setAttribute("title", "Muc Muc");
 
     const bubble = document.createElement("div");
@@ -4094,38 +4096,12 @@ class OpenAgentVaultPet {
     creature.className = "oa-vault-pet-creature";
     root.appendChild(creature);
 
-    const head = document.createElement("div");
-    head.className = "oa-vault-pet-head";
-    creature.appendChild(head);
-
-    const shine = document.createElement("div");
-    shine.className = "oa-vault-pet-shine";
-    head.appendChild(shine);
-
-    const face = document.createElement("div");
-    face.className = "oa-vault-pet-face";
-    head.appendChild(face);
-
-    ["left", "right"].forEach((side) => {
-      const eye = document.createElement("div");
-      eye.className = `oa-vault-pet-eye is-${side}`;
-      const pupil = document.createElement("span");
-      eye.appendChild(pupil);
-      face.appendChild(eye);
-    });
-
-    const mouth = document.createElement("div");
-    mouth.className = "oa-vault-pet-mouth";
-    face.appendChild(mouth);
-
-    const tentacles = document.createElement("div");
-    tentacles.className = "oa-vault-pet-tentacles";
-    creature.appendChild(tentacles);
-    for (let index = 1; index <= 8; index += 1) {
-      const tentacle = document.createElement("div");
-      tentacle.className = `oa-vault-pet-tentacle t${index}`;
-      tentacles.appendChild(tentacle);
-    }
+    const mascot = document.createElement("img");
+    mascot.className = "oa-vault-pet-mascot";
+    mascot.alt = "";
+    mascot.draggable = false;
+    mascot.src = this.plugin.getVaultPetMascotDataUrl();
+    creature.appendChild(mascot);
 
     const shadow = document.createElement("div");
     shadow.className = "oa-vault-pet-shadow";
@@ -4713,7 +4689,7 @@ class OpenAgentSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Vault pet" });
 
     new Setting(containerEl)
-      .setName("Muc Muc the octopus")
+      .setName("Muc Muc mascot")
       .setDesc("Keep a small animated vault pet floating inside Obsidian.")
       .addToggle((toggle) => {
         toggle
@@ -4880,6 +4856,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.lastProcessedSmokeRequestId = "";
     this.logoDataUrl = "";
     this.logoLoadPromise = null;
+    this.vaultPetMascotDataUrl = "";
     this.debugEvents = [];
     this.devSmokePollIntervalId = null;
     this.daemonStatus = createDaemonStatusSnapshot({
@@ -5053,7 +5030,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.addCommand({
       id: "openagent-toggle-vault-pet",
-      name: "Toggle vault octopus",
+      name: "Toggle vault mascot",
       callback: () => {
         void this.toggleVaultPet();
       },
@@ -5061,7 +5038,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.addCommand({
       id: "openagent-pet-vault-octopus",
-      name: "Pet vault octopus",
+      name: "Pet Muc Muc",
       callback: () => {
         this.petVaultOctopus();
       },
@@ -5069,7 +5046,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.addCommand({
       id: "openagent-summon-vault-octopus-to-selection",
-      name: "Summon vault octopus to selection",
+      name: "Summon Muc Muc to selection",
       hotkeys: [
         {
           modifiers: ["Ctrl"],
@@ -5629,6 +5606,33 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   getPluginLogoDataUrl() {
     return this.logoDataUrl;
+  }
+
+  getVaultPetMascotDataUrl() {
+    if (this.vaultPetMascotDataUrl) {
+      return this.vaultPetMascotDataUrl;
+    }
+
+    const mascotPath = this.getVaultPetMascotPath();
+    if (!mascotPath) {
+      return this.getPluginLogoDataUrl();
+    }
+
+    try {
+      this.vaultPetMascotDataUrl = `data:image/png;base64,${fs.readFileSync(mascotPath).toString("base64")}`;
+      return this.vaultPetMascotDataUrl;
+    } catch {
+      return this.getPluginLogoDataUrl();
+    }
+  }
+
+  getVaultPetMascotPath() {
+    const candidatePaths = [
+      this.getManifestPluginPath(VAULT_PET_MASCOT_FILE_NAME),
+      VAULT_PET_MASCOT_PATH,
+    ].filter(Boolean);
+
+    return candidatePaths.find((candidatePath) => fs.existsSync(candidatePath)) || "";
   }
 
   async ensurePluginLogoDataUrlLoaded() {

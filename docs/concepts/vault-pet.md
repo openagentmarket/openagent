@@ -4,7 +4,7 @@ title: Vault Pet
 
 # Vault Pet
 
-Vault Pet is the small animated octopus that lives inside the Obsidian app while
+Vault Pet is the small animated mascot that lives inside the Obsidian app while
 the OpenAgent plugin is enabled.
 
 The current pet is named **Muc Muc**. It is intentionally lightweight: a playful
@@ -27,7 +27,8 @@ It is not:
 It is:
 
 - HTML elements created by `apps/obsidian-plugin/main.js`
-- CSS drawing and animation from `apps/obsidian-plugin/styles.css`
+- a PNG mascot asset loaded from `apps/obsidian-plugin/vault-pet-mascot.png`
+- CSS layout and animation from `apps/obsidian-plugin/styles.css`
 - plugin state saved through Obsidian `saveData`
 - Obsidian vault/workspace event listeners that trigger mood changes
 
@@ -39,7 +40,7 @@ Muc Muc can:
 - stay inside the Obsidian app window
 - be dragged to a new screen position
 - remember its position after plugin reloads
-- blink, bob, wiggle tentacles, swim slightly, and jump when excited
+- bob, swim slightly, glow, and jump when excited
 - show short speech bubbles
 - react when the vault changes:
   - file created
@@ -55,9 +56,12 @@ Muc Muc can:
 - be toggled from OpenAgent settings
 - be reset to its default position from OpenAgent settings
 - be controlled from the command palette:
-  - `OpenAgent: Toggle vault octopus`
-  - `OpenAgent: Pet vault octopus`
-  - `OpenAgent: Summon vault octopus to selection`
+  - `OpenAgent: Toggle vault mascot`
+  - `OpenAgent: Pet Muc Muc`
+  - `OpenAgent: Summon Muc Muc to selection`
+
+The current artwork uses the local OpenAgent transparent logo. It is bundled
+with the Obsidian plugin release assets.
 
 Clicking Muc Muc currently pets it. Petting makes it jump and say a short
 personality line.
@@ -146,7 +150,7 @@ The OpenAgent settings tab includes a `Vault pet` section.
 
 Available controls:
 
-- `Muc Muc the octopus`: enable or disable the pet
+- `Muc Muc mascot`: enable or disable the pet
 - `Pet`: manually pet it
 - `Reset spot`: move it back to the default corner
 

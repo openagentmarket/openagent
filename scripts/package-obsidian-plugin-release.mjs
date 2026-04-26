@@ -7,8 +7,8 @@ import process from "node:process";
 const repoRoot = process.cwd();
 const pluginDir = path.join(repoRoot, "apps", "obsidian-plugin");
 const distDir = path.join(repoRoot, "dist", "obsidian-plugin-release");
-const manualInstallFiles = ["main.js", "manifest.json", "styles.css"];
-const bundledPluginFiles = [...manualInstallFiles, "logo.png"];
+const manualInstallFiles = ["main.js", "manifest.json", "styles.css", "logo.png", "vault-pet-mascot.png"];
+const bundledPluginFiles = [...manualInstallFiles];
 
 const manifest = readJson(path.join(pluginDir, "manifest.json"));
 const pluginPackage = readJson(path.join(pluginDir, "package.json"));
@@ -65,6 +65,8 @@ const releaseNotes = [
   "- `main.js`",
   "- `manifest.json`",
   "- `styles.css`",
+  "- `logo.png`",
+  "- `vault-pet-mascot.png`",
   "",
   "Zip install:",
   "1. Create `.obsidian/plugins` in your vault if it does not exist yet.",

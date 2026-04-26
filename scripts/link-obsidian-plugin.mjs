@@ -7,7 +7,7 @@ const repoRoot = process.cwd();
 const vaultPath = resolveOpenVaultPath();
 const sourceDir = path.join(repoRoot, "apps", "obsidian-plugin");
 const targetDir = path.join(vaultPath, ".obsidian", "plugins", "openagent");
-const linkedFiles = ["main.js", "manifest.json", "styles.css", "package.json", "logo.png"];
+const linkedFiles = ["main.js", "manifest.json", "styles.css", "package.json", "logo.png", "vault-pet-mascot.png"];
 
 fs.mkdirSync(targetDir, { recursive: true });
 
