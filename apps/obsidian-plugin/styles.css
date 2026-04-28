@@ -36,6 +36,197 @@
   user-select: text;
 }
 
+.oa-voice-graph-view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+
+.oa-voice-graph-toolbar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
+  background: color-mix(in srgb, var(--background-primary) 96%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.oa-voice-graph-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.oa-voice-graph-title span {
+  color: var(--text-normal);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.oa-voice-graph-title small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.oa-voice-graph-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.oa-voice-graph-icon-button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.oa-voice-graph-icon-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.oa-voice-graph-slider {
+  display: grid;
+  grid-template-columns: auto 112px;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.oa-voice-graph-slider input {
+  width: 112px;
+}
+
+.oa-voice-graph-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.oa-voice-graph-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+
+.oa-voice-graph-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+
+.oa-voice-graph-dictation {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100% - 24px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+
+.oa-voice-graph-dictation textarea {
+  width: 100%;
+  min-height: 48px;
+  max-height: 120px;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 52%, transparent);
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: color-mix(in srgb, var(--background-primary) 88%, transparent);
+  color: var(--text-normal);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  backdrop-filter: blur(10px);
+}
+
+.oa-voice-graph-dictation textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text-muted) 58%, var(--background-modifier-border));
+}
+
+.oa-voice-graph-dictation button {
+  height: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background-secondary) 84%, transparent);
+  color: var(--text-normal);
+  font-size: 0.76rem;
+}
+
+.oa-voice-graph-dictation button:disabled {
+  opacity: 0.45;
+}
+
+.oa-voice-graph-hud span {
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 46%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background-primary) 82%, transparent);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 680px) {
+  .oa-voice-graph-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .oa-voice-graph-controls {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .oa-voice-graph-slider {
+    width: 100%;
+    grid-template-columns: auto minmax(96px, 1fr);
+  }
+
+  .oa-voice-graph-slider input {
+    width: 100%;
+  }
+
+  .oa-voice-graph-dictation {
+    left: 12px;
+    right: 12px;
+    bottom: 42px;
+    width: auto;
+  }
+}
+
 .openagent-view .oa-message-text,
 .openagent-view .oa-message-text * {
   -webkit-user-select: text;

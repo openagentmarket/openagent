@@ -29,6 +29,7 @@ try {
 }
 
 const VIEW_TYPE = "openagent-view";
+const VOICE_GRAPH_VIEW_TYPE = "openagent-voice-graph-view";
 const DAEMON_CONFIG_PATH = path.join(os.homedir(), ".openagent", "daemon-config.json");
 const DAEMON_LOG_PATH = path.join(os.homedir(), ".openagent", "daemon.log");
 const PLUGIN_LOGO_FILE_NAME = "logo.png";
@@ -111,6 +112,10 @@ const VAULT_PET_WIDTH = 118;
 const VAULT_PET_HEIGHT = 142;
 const VAULT_PET_MARGIN = 14;
 const VAULT_PET_ACTIVITY_COOLDOWN_MS = 1_200;
+const VOICE_GRAPH_MAX_NODES = 120;
+const VOICE_GRAPH_MAX_EDGES = 260;
+const VOICE_GRAPH_MIN_NODE_RADIUS = 4;
+const VOICE_GRAPH_MAX_NODE_RADIUS = 24;
 const VAULT_PET_IDLE_PHRASES = Object.freeze([
   "Bloop. I live here now.",
   "Your vault has snacks?",
@@ -1784,7 +1789,27 @@ class OpenAgentApiClient {
     return this.request("POST", `/tasks/${encodeURIComponent(taskId)}/interrupt`, {});
   }
 
+  startVoiceRealtime(body = {}) {
+    return this.request("POST", "/voice/realtime/start", body);
+  }
+
+  stopVoiceRealtime(sessionId) {
+    return this.request("POST", `/voice/realtime/${encodeURIComponent(sessionId)}/stop`, {});
+  }
+
+  openVoiceRealtimeStream(sessionId, handlers = {}) {
+    return this.openEventStream(`/voice/realtime/${encodeURIComponent(sessionId)}/stream`, handlers);
+  }
+
+  openEventStream(route, handlers = {}) {
+    return this.openTaskLikeStream(route, handlers);
+  }
+
   openTaskStream(taskId, handlers = {}) {
+    return this.openTaskLikeStream(`/tasks/${encodeURIComponent(taskId)}/stream`, handlers);
+  }
+
+  openTaskLikeStream(route, handlers = {}) {
     const config = this.loadConfig();
     const normalizedHandlers = typeof handlers === "function"
       ? { onEvent: handlers }
@@ -1804,7 +1829,7 @@ class OpenAgentApiClient {
     const request = http.request({
       host: config.host,
       port: config.port,
-      path: `/tasks/${encodeURIComponent(taskId)}/stream`,
+      path: route,
       method: "GET",
       headers: {
         Accept: "text/event-stream",
@@ -2839,6 +2864,826 @@ class CanvasSelectionResolver {
     }
 
     return "";
+  }
+}
+
+class OpenAgentVoiceGraphView extends ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.plugin = plugin;
+    this.canvas = null;
+    this.ctx = null;
+    this.statusEl = null;
+    this.volumeEl = null;
+    this.nodeCountEl = null;
+    this.dictationInputEl = null;
+    this.dictationSendButtonEl = null;
+    this.sensitivityInput = null;
+    this.nodes = [];
+    this.edges = [];
+    this.nodeByPath = new Map();
+    this.animationFrameId = 0;
+    this.resizeObserver = null;
+    this.audioContext = null;
+    this.audioAnalyser = null;
+    this.audioData = null;
+    this.mediaStream = null;
+    this.audioLevel = 0;
+    this.frequencyTilt = 0;
+    this.isMicActive = false;
+    this.realtimePeerConnection = null;
+    this.realtimeDataChannel = null;
+    this.realtimeRemoteAudioEl = null;
+    this.realtimeSessionId = "";
+    this.realtimeStreamDisposer = null;
+    this.isDictating = false;
+    this.dictationTranscript = "";
+    this.dictationIsSending = false;
+    this.sensitivity = 1.35;
+    this.hoveredNode = null;
+    this.draggingNode = null;
+    this.isPanning = false;
+    this.panX = 0;
+    this.panY = 0;
+    this.zoom = 1;
+    this.pointerStart = null;
+    this.lastFrameAt = 0;
+  }
+
+  getViewType() {
+    return VOICE_GRAPH_VIEW_TYPE;
+  }
+
+  getDisplayText() {
+    return "Voice Graph";
+  }
+
+  getIcon() {
+    return "audio-lines";
+  }
+
+  async onOpen() {
+    this.render();
+    this.rebuildGraph();
+    this.startAnimation();
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.scheduleGraphRefresh()));
+    this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleGraphRefresh()));
+  }
+
+  async onClose() {
+    window.clearTimeout(this.graphRefreshTimer);
+    this.graphRefreshTimer = null;
+    this.stopAnimation();
+    this.stopDictation();
+    this.stopMic();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.contentEl.empty();
+  }
+
+  render() {
+    this.contentEl.empty();
+    this.contentEl.addClass("oa-voice-graph-view");
+
+    const toolbar = this.contentEl.createDiv({ cls: "oa-voice-graph-toolbar" });
+    const title = toolbar.createDiv({ cls: "oa-voice-graph-title" });
+    title.createEl("span", { text: "Voice Graph" });
+    this.statusEl = title.createEl("small", { text: "Ambient mode" });
+
+    const controls = toolbar.createDiv({ cls: "oa-voice-graph-controls" });
+    const micButton = controls.createEl("button", {
+      cls: "clickable-icon oa-voice-graph-icon-button",
+      attr: { "aria-label": "Start microphone" },
+    });
+    setIcon(micButton, "mic");
+    setTooltip(micButton, "Animate graph from microphone");
+    micButton.addEventListener("click", () => {
+      void this.startMic();
+    });
+
+    const stopButton = controls.createEl("button", {
+      cls: "clickable-icon oa-voice-graph-icon-button",
+      attr: { "aria-label": "Stop microphone" },
+    });
+    setIcon(stopButton, "mic-off");
+    setTooltip(stopButton, "Stop microphone animation");
+    stopButton.addEventListener("click", () => this.stopMic());
+
+    const refreshButton = controls.createEl("button", {
+      cls: "clickable-icon oa-voice-graph-icon-button",
+      attr: { "aria-label": "Refresh graph" },
+    });
+    setIcon(refreshButton, "refresh-cw");
+    setTooltip(refreshButton, "Refresh graph");
+    refreshButton.addEventListener("click", () => this.rebuildGraph());
+
+    const centerButton = controls.createEl("button", {
+      cls: "clickable-icon oa-voice-graph-icon-button",
+      attr: { "aria-label": "Center graph" },
+    });
+    setIcon(centerButton, "scan");
+    setTooltip(centerButton, "Center graph");
+    centerButton.addEventListener("click", () => this.centerGraph());
+
+    const dictateButton = controls.createEl("button", {
+      cls: "clickable-icon oa-voice-graph-icon-button",
+      attr: { "aria-label": "Start dictation" },
+    });
+    setIcon(dictateButton, "message-circle");
+    setTooltip(dictateButton, "Dictate a message");
+    dictateButton.addEventListener("click", () => this.toggleDictation());
+
+    const sensitivityWrap = controls.createDiv({ cls: "oa-voice-graph-slider" });
+    sensitivityWrap.createEl("span", { text: "Sensitivity" });
+    this.sensitivityInput = sensitivityWrap.createEl("input", {
+      attr: {
+        type: "range",
+        min: "0.5",
+        max: "3",
+        step: "0.05",
+        value: String(this.sensitivity),
+      },
+    });
+    this.sensitivityInput.addEventListener("input", () => {
+      this.sensitivity = Number(this.sensitivityInput?.value || 1.35);
+    });
+
+    const stage = this.contentEl.createDiv({ cls: "oa-voice-graph-stage" });
+    this.canvas = stage.createEl("canvas", { cls: "oa-voice-graph-canvas" });
+    this.ctx = this.canvas.getContext("2d");
+    const hud = stage.createDiv({ cls: "oa-voice-graph-hud" });
+    this.nodeCountEl = hud.createEl("span", { text: "0 notes" });
+    this.volumeEl = hud.createEl("span", { text: "signal 0%" });
+    const dictationDock = stage.createDiv({ cls: "oa-voice-graph-dictation" });
+    this.dictationInputEl = dictationDock.createEl("textarea", {
+      attr: {
+        rows: "2",
+        placeholder: "Click the dictation button, or type here...",
+      },
+    });
+    this.dictationInputEl.addEventListener("input", () => {
+      this.dictationTranscript = String(this.dictationInputEl?.value || "");
+      this.updateDictationSendState();
+    });
+    this.dictationSendButtonEl = dictationDock.createEl("button", { text: "Send" });
+    this.dictationSendButtonEl.addEventListener("click", () => {
+      void this.sendDictation();
+    });
+    this.updateDictationSendState();
+
+    this.registerCanvasEvents();
+    this.resizeObserver = new ResizeObserver(() => this.resizeCanvas());
+    this.resizeObserver.observe(stage);
+    this.resizeCanvas();
+  }
+
+  registerCanvasEvents() {
+    this.canvas.addEventListener("pointerdown", (event) => {
+      const point = this.getGraphPoint(event);
+      const node = this.findNodeAt(point.x, point.y);
+      this.pointerStart = { clientX: event.clientX, clientY: event.clientY, panX: this.panX, panY: this.panY };
+      if (node) {
+        this.draggingNode = node;
+        node.fixed = true;
+      } else {
+        this.isPanning = true;
+      }
+      this.canvas.setPointerCapture(event.pointerId);
+    });
+    this.canvas.addEventListener("pointermove", (event) => {
+      const point = this.getGraphPoint(event);
+      this.hoveredNode = this.findNodeAt(point.x, point.y);
+      this.canvas.style.cursor = this.draggingNode ? "grabbing" : (this.hoveredNode ? "pointer" : (this.isPanning ? "grabbing" : "grab"));
+      if (this.draggingNode) {
+        this.draggingNode.x = point.x;
+        this.draggingNode.y = point.y;
+        this.draggingNode.vx = 0;
+        this.draggingNode.vy = 0;
+      } else if (this.isPanning && this.pointerStart) {
+        this.panX = this.pointerStart.panX + event.clientX - this.pointerStart.clientX;
+        this.panY = this.pointerStart.panY + event.clientY - this.pointerStart.clientY;
+      }
+    });
+    this.canvas.addEventListener("pointerup", (event) => this.finishPointer(event));
+    this.canvas.addEventListener("pointercancel", (event) => this.finishPointer(event));
+    this.canvas.addEventListener("dblclick", (event) => {
+      const point = this.getGraphPoint(event);
+      const node = this.findNodeAt(point.x, point.y);
+      if (node) {
+        void this.app.workspace.openLinkText(node.path, "", false);
+      }
+    });
+    this.canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const before = this.getGraphPoint(event);
+      const factor = event.deltaY > 0 ? 0.92 : 1.08;
+      this.zoom = Math.max(0.35, Math.min(2.8, this.zoom * factor));
+      const after = this.getGraphPoint(event);
+      this.panX += (after.x - before.x) * this.zoom;
+      this.panY += (after.y - before.y) * this.zoom;
+    }, { passive: false });
+  }
+
+  finishPointer(event) {
+    if (this.draggingNode) {
+      this.draggingNode.fixed = false;
+    }
+    this.draggingNode = null;
+    this.isPanning = false;
+    this.pointerStart = null;
+    try {
+      this.canvas.releasePointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture can already be gone if Obsidian moved focus.
+    }
+  }
+
+  resizeCanvas() {
+    if (!this.canvas) {
+      return;
+    }
+    const rect = this.canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.floor(rect.width * ratio));
+    const height = Math.max(1, Math.floor(rect.height * ratio));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.centerGraph({ keepZoom: true });
+    }
+  }
+
+  scheduleGraphRefresh() {
+    window.clearTimeout(this.graphRefreshTimer);
+    this.graphRefreshTimer = window.setTimeout(() => this.rebuildGraph(), 300);
+  }
+
+  rebuildGraph() {
+    const files = this.app.vault.getMarkdownFiles();
+    const fileByPath = new Map(files.map((file) => [file.path, file]));
+    const degreeByPath = new Map(files.map((file) => [file.path, 0]));
+    const rawEdges = [];
+    const resolvedLinks = this.app.metadataCache.resolvedLinks || {};
+    Object.entries(resolvedLinks).forEach(([sourcePath, links]) => {
+      if (!fileByPath.has(sourcePath)) {
+        return;
+      }
+      Object.entries(links || {}).forEach(([targetPath, count]) => {
+        if (!fileByPath.has(targetPath) || sourcePath === targetPath) {
+          return;
+        }
+        const weight = Math.max(1, Number(count || 1));
+        rawEdges.push({ sourcePath, targetPath, weight });
+        degreeByPath.set(sourcePath, (degreeByPath.get(sourcePath) || 0) + weight);
+        degreeByPath.set(targetPath, (degreeByPath.get(targetPath) || 0) + weight);
+      });
+    });
+
+    const activePath = this.app.workspace.getActiveFile()?.path || "";
+    const selectedPaths = files
+      .map((file) => ({
+        file,
+        score: (degreeByPath.get(file.path) || 0) + (file.path === activePath ? 1_000 : 0),
+      }))
+      .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path))
+      .slice(0, VOICE_GRAPH_MAX_NODES)
+      .map((entry) => entry.file.path);
+    const selectedSet = new Set(selectedPaths);
+    const previousByPath = this.nodeByPath;
+    this.nodeByPath = new Map();
+    this.nodes = selectedPaths.map((filePath, index) => {
+      const file = fileByPath.get(filePath);
+      const previous = previousByPath.get(filePath);
+      const angle = (Math.PI * 2 * index) / Math.max(1, selectedPaths.length);
+      const radius = 170 + 7 * Math.sqrt(index);
+      const degree = degreeByPath.get(filePath) || 0;
+      const node = {
+        path: filePath,
+        label: file?.basename || path.basename(filePath, ".md"),
+        x: previous?.x ?? Math.cos(angle) * radius,
+        y: previous?.y ?? Math.sin(angle) * radius,
+        vx: previous?.vx ?? 0,
+        vy: previous?.vy ?? 0,
+        radius: Math.min(VOICE_GRAPH_MAX_NODE_RADIUS, VOICE_GRAPH_MIN_NODE_RADIUS + Math.sqrt(degree) * 1.7),
+        pulse: Math.random() * Math.PI * 2,
+        degree,
+        fixed: false,
+      };
+      this.nodeByPath.set(filePath, node);
+      return node;
+    });
+    this.edges = rawEdges
+      .filter((edge) => selectedSet.has(edge.sourcePath) && selectedSet.has(edge.targetPath))
+      .slice(0, VOICE_GRAPH_MAX_EDGES)
+      .map((edge) => ({
+        source: this.nodeByPath.get(edge.sourcePath),
+        target: this.nodeByPath.get(edge.targetPath),
+        weight: edge.weight,
+      }))
+      .filter((edge) => edge.source && edge.target);
+    this.nodeCountEl?.setText(`${this.nodes.length} notes, ${this.edges.length} links`);
+    this.centerGraph({ keepZoom: true });
+  }
+
+  centerGraph(options = {}) {
+    const rect = this.canvas?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    this.panX = rect.width / 2;
+    this.panY = rect.height / 2;
+    if (!options.keepZoom) {
+      this.zoom = 1;
+    }
+  }
+
+  async startMic() {
+    if (this.isMicActive) {
+      return this.mediaStream;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      this.audioContext = new AudioContextCtor();
+      const source = this.audioContext.createMediaStreamSource(stream);
+      this.audioAnalyser = this.audioContext.createAnalyser();
+      this.audioAnalyser.fftSize = 512;
+      this.audioAnalyser.smoothingTimeConstant = 0.72;
+      this.audioData = new Uint8Array(this.audioAnalyser.frequencyBinCount);
+      source.connect(this.audioAnalyser);
+      this.mediaStream = stream;
+      this.isMicActive = true;
+      this.statusEl?.setText("Listening");
+      return stream;
+    } catch (error) {
+      this.statusEl?.setText("Mic unavailable");
+      new Notice(`Voice Graph could not start the microphone: ${error.message || error}`);
+      throw error;
+    }
+  }
+
+  stopMic() {
+    if (this.isDictating) {
+      this.stopDictation();
+    }
+    this.mediaStream?.getTracks?.().forEach((track) => track.stop());
+    this.mediaStream = null;
+    this.audioContext?.close?.().catch(() => {});
+    this.audioContext = null;
+    this.audioAnalyser = null;
+    this.audioData = null;
+    this.isMicActive = false;
+    this.audioLevel = 0;
+    this.frequencyTilt = 0;
+    this.statusEl?.setText("Ambient mode");
+  }
+
+  toggleDictation() {
+    if (this.isDictating) {
+      this.stopDictation();
+      return;
+    }
+    this.startDictation();
+  }
+
+  async startDictation() {
+    if (this.isDictating) {
+      return;
+    }
+    this.stopDictation({ stopServer: false });
+    this.isDictating = true;
+    this.statusEl?.setText("Starting voice mode");
+    this.updateDictationSendState();
+
+    try {
+      await this.startMic();
+      const offerSdp = await this.createRealtimeWebRtcOffer();
+      const context = this.plugin.getVaultPetQuickChatContext();
+      const response = await this.plugin.api.startVoiceRealtime({
+        cwd: context.cwd || this.plugin.getVaultBasePath(),
+        outputModality: "text",
+        offerSdp,
+        prompt: [
+          "You are OpenAgent Voice Graph inside Obsidian.",
+          "Transcribe the user's speech accurately, including Vietnamese.",
+          "Keep assistant responses concise. The UI primarily uses the user transcript as a prompt.",
+        ].join(" "),
+        runtimeConfig: this.plugin.buildRuntimeConfigPayload(),
+      });
+      this.realtimeSessionId = String(response.sessionId || "");
+      if (!this.realtimeSessionId) {
+        throw new Error("OpenAgent daemon did not return a realtime session id.");
+      }
+      const answerSdp = String(response.answerSdp || "").trim();
+      if (!answerSdp) {
+        throw new Error("OpenAgent daemon did not return a realtime SDP answer.");
+      }
+      await this.applyRealtimeWebRtcAnswer(answerSdp);
+      this.openRealtimeTranscriptStream(this.realtimeSessionId);
+      this.statusEl?.setText("Voice mode");
+    } catch (error) {
+      this.stopDictation({ stopServer: true });
+      new Notice(`Voice Graph could not start Codex voice mode: ${error.message || error}`);
+    }
+  }
+
+  async createRealtimeWebRtcOffer() {
+    const PeerConnectionCtor = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+    if (!PeerConnectionCtor) {
+      throw new Error("WebRTC is not available in this Obsidian runtime.");
+    }
+    if (!this.mediaStream) {
+      throw new Error("Microphone stream is not active.");
+    }
+    const audioTracks = this.mediaStream.getAudioTracks?.() || [];
+    if (!audioTracks.length) {
+      throw new Error("Microphone stream does not contain an audio track.");
+    }
+
+    this.stopRealtimePeerConnection();
+    const peerConnection = new PeerConnectionCtor({ iceServers: [] });
+    this.realtimePeerConnection = peerConnection;
+    this.realtimeDataChannel = peerConnection.createDataChannel("oai-events", { ordered: true });
+
+    peerConnection.onconnectionstatechange = () => {
+      const state = String(peerConnection.connectionState || "");
+      if (state === "connected") {
+        this.statusEl?.setText("Voice mode");
+      } else if (state === "failed" || state === "disconnected") {
+        this.statusEl?.setText("Voice connection interrupted");
+      }
+    };
+    peerConnection.ontrack = (event) => {
+      const stream = event.streams?.[0];
+      if (!stream) {
+        return;
+      }
+      if (!this.realtimeRemoteAudioEl) {
+        this.realtimeRemoteAudioEl = document.createElement("audio");
+        this.realtimeRemoteAudioEl.autoplay = true;
+        this.realtimeRemoteAudioEl.hidden = true;
+        this.contentEl.appendChild(this.realtimeRemoteAudioEl);
+      }
+      this.realtimeRemoteAudioEl.srcObject = stream;
+      void this.realtimeRemoteAudioEl.play?.().catch(() => {});
+    };
+
+    for (const track of audioTracks) {
+      peerConnection.addTransceiver(track, { direction: "sendrecv" });
+    }
+
+    const offer = await peerConnection.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: false,
+    });
+    await peerConnection.setLocalDescription(offer);
+    await this.waitForRealtimeIceGathering(peerConnection, 5_000);
+    const sdp = String(peerConnection.localDescription?.sdp || "").trim();
+    if (!sdp) {
+      throw new Error("WebRTC did not produce a local SDP offer.");
+    }
+    return sdp;
+  }
+
+  waitForRealtimeIceGathering(peerConnection, timeoutMs) {
+    if (peerConnection.iceGatheringState === "complete") {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timer);
+        peerConnection.removeEventListener("icegatheringstatechange", onIceGatheringStateChange);
+        resolve();
+      };
+      const onIceGatheringStateChange = () => {
+        if (peerConnection.iceGatheringState === "complete") {
+          finish();
+        }
+      };
+      const timer = window.setTimeout(finish, timeoutMs);
+      peerConnection.addEventListener("icegatheringstatechange", onIceGatheringStateChange);
+    });
+  }
+
+  async applyRealtimeWebRtcAnswer(answerSdp) {
+    if (!this.realtimePeerConnection) {
+      throw new Error("WebRTC peer connection is not active.");
+    }
+    await this.realtimePeerConnection.setRemoteDescription({
+      type: "answer",
+      sdp: answerSdp,
+    });
+  }
+
+  openRealtimeTranscriptStream(sessionId) {
+    this.realtimeStreamDisposer?.();
+    this.realtimeStreamDisposer = this.plugin.api.openVoiceRealtimeStream(sessionId, {
+      onEvent: (event, payload) => {
+        if (event === "transcript.delta" || event === "transcript.done" || event === "ready") {
+          const transcript = String(payload?.transcript || payload?.text || "").trim();
+          if (transcript) {
+            this.dictationTranscript = transcript;
+            if (this.dictationInputEl) {
+              this.dictationInputEl.value = transcript;
+            }
+            this.updateDictationSendState();
+          }
+        }
+        if (event === "error") {
+          new Notice(String(payload?.message || "Codex voice mode failed."));
+        }
+        if (event === "closed") {
+          this.isDictating = false;
+          if (!this.isMicActive) {
+            this.statusEl?.setText("Ambient mode");
+          }
+        }
+      },
+      onError: (error) => {
+        new Notice(`Voice transcript stream failed: ${error.message || error}`);
+      },
+    });
+  }
+
+  stopDictation(options = {}) {
+    const stopServer = options.stopServer !== false;
+    const sessionId = this.realtimeSessionId;
+    this.realtimeStreamDisposer?.();
+    this.realtimeStreamDisposer = null;
+    this.realtimeSessionId = "";
+    this.stopRealtimePeerConnection();
+    if (stopServer && sessionId) {
+      void this.plugin.api.stopVoiceRealtime(sessionId).catch(() => {});
+    }
+    this.isDictating = false;
+    if (!this.isMicActive) {
+      this.statusEl?.setText("Ambient mode");
+    }
+  }
+
+  stopRealtimePeerConnection() {
+    if (this.realtimeDataChannel) {
+      try {
+        this.realtimeDataChannel.close();
+      } catch {
+        // Ignore peer cleanup failures.
+      }
+    }
+    if (this.realtimePeerConnection) {
+      try {
+        this.realtimePeerConnection.getSenders?.().forEach((sender) => {
+          try {
+            this.realtimePeerConnection.removeTrack(sender);
+          } catch {
+            // Ignore senders already removed by the runtime.
+          }
+        });
+        this.realtimePeerConnection.close();
+      } catch {
+        // Ignore peer cleanup failures.
+      }
+    }
+    if (this.realtimeRemoteAudioEl) {
+      try {
+        this.realtimeRemoteAudioEl.pause();
+        this.realtimeRemoteAudioEl.srcObject = null;
+        this.realtimeRemoteAudioEl.remove();
+      } catch {
+        // Ignore audio element cleanup failures.
+      }
+    }
+    this.realtimeDataChannel = null;
+    this.realtimePeerConnection = null;
+    this.realtimeRemoteAudioEl = null;
+  }
+
+  updateDictationSendState() {
+    if (!this.dictationSendButtonEl) {
+      return;
+    }
+    this.dictationSendButtonEl.disabled = this.dictationIsSending || !String(this.dictationTranscript || "").trim();
+    this.dictationSendButtonEl.textContent = this.dictationIsSending ? "Sending..." : "Send";
+  }
+
+  async sendDictation() {
+    const message = String(this.dictationTranscript || this.dictationInputEl?.value || "").trim();
+    if (!message) {
+      new Notice("Dictate or type a message first.");
+      return;
+    }
+    this.stopDictation();
+    this.dictationIsSending = true;
+    this.updateDictationSendState();
+    try {
+      const context = this.plugin.getVaultPetQuickChatContext({ preferVaultCanvas: true });
+      await this.plugin.startVaultPetChat(context, message);
+      this.dictationTranscript = "";
+      if (this.dictationInputEl) {
+        this.dictationInputEl.value = "";
+      }
+      this.updateDictationSendState();
+    } catch (error) {
+      new Notice(String(error?.message || error));
+    } finally {
+      this.dictationIsSending = false;
+      this.updateDictationSendState();
+    }
+  }
+
+  startAnimation() {
+    if (this.animationFrameId) {
+      return;
+    }
+    const frame = (timestamp) => {
+      const dt = Math.min(0.05, Math.max(0.001, (timestamp - (this.lastFrameAt || timestamp)) / 1000));
+      this.lastFrameAt = timestamp;
+      this.updateAudio();
+      this.stepPhysics(dt, timestamp / 1000);
+      this.draw(timestamp / 1000);
+      this.animationFrameId = window.requestAnimationFrame(frame);
+    };
+    this.animationFrameId = window.requestAnimationFrame(frame);
+  }
+
+  stopAnimation() {
+    if (this.animationFrameId) {
+      window.cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = 0;
+    }
+  }
+
+  updateAudio() {
+    if (!this.audioAnalyser || !this.audioData) {
+      this.audioLevel *= 0.92;
+      this.frequencyTilt *= 0.9;
+      return;
+    }
+    this.audioAnalyser.getByteFrequencyData(this.audioData);
+    let sum = 0;
+    let high = 0;
+    for (let index = 0; index < this.audioData.length; index += 1) {
+      const value = this.audioData[index] / 255;
+      sum += value * value;
+      if (index > this.audioData.length * 0.45) {
+        high += value;
+      }
+    }
+    const rms = Math.sqrt(sum / Math.max(1, this.audioData.length));
+    const highAverage = high / Math.max(1, this.audioData.length * 0.55);
+    this.audioLevel = this.audioLevel * 0.72 + rms * 0.28;
+    this.frequencyTilt = this.frequencyTilt * 0.78 + highAverage * 0.22;
+    this.volumeEl?.setText(`signal ${Math.round(Math.min(1, this.audioLevel * 3) * 100)}%`);
+  }
+
+  stepPhysics(dt, time) {
+    const signal = Math.min(2.2, (this.audioLevel * 5.5 + 0.08) * this.sensitivity);
+    const repel = 4800 + signal * 8800;
+    const linkDistance = 70 + signal * 44;
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      const a = this.nodes[i];
+      for (let j = i + 1; j < this.nodes.length; j += 1) {
+        const b = this.nodes[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distanceSq = Math.max(80, dx * dx + dy * dy);
+        const force = repel / distanceSq;
+        const distance = Math.sqrt(distanceSq);
+        const fx = (dx / distance) * force;
+        const fy = (dy / distance) * force;
+        if (!a.fixed) {
+          a.vx -= fx * dt;
+          a.vy -= fy * dt;
+        }
+        if (!b.fixed) {
+          b.vx += fx * dt;
+          b.vy += fy * dt;
+        }
+      }
+    }
+    this.edges.forEach((edge) => {
+      const dx = edge.target.x - edge.source.x;
+      const dy = edge.target.y - edge.source.y;
+      const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const desired = linkDistance + Math.min(45, edge.weight * 5);
+      const force = (distance - desired) * 0.018;
+      const fx = (dx / distance) * force;
+      const fy = (dy / distance) * force;
+      if (!edge.source.fixed) {
+        edge.source.vx += fx;
+        edge.source.vy += fy;
+      }
+      if (!edge.target.fixed) {
+        edge.target.vx -= fx;
+        edge.target.vy -= fy;
+      }
+    });
+    this.nodes.forEach((node, index) => {
+      const centerPull = 0.018;
+      if (!node.fixed) {
+        node.vx += -node.x * centerPull * dt;
+        node.vy += -node.y * centerPull * dt;
+        const wave = Math.sin(time * (2.2 + this.frequencyTilt * 4) + node.pulse + index * 0.11);
+        node.vx += Math.cos(node.pulse) * wave * signal * 4.5 * dt;
+        node.vy += Math.sin(node.pulse) * wave * signal * 4.5 * dt;
+        node.x += node.vx;
+        node.y += node.vy;
+      }
+      node.vx *= 0.86;
+      node.vy *= 0.86;
+    });
+  }
+
+  draw(time) {
+    if (!this.ctx || !this.canvas) {
+      return;
+    }
+    const ratio = window.devicePixelRatio || 1;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const cssWidth = width / ratio;
+    const cssHeight = height / ratio;
+    const signal = Math.min(1.2, (this.audioLevel * 3.2 + 0.035) * this.sensitivity);
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, width, height);
+    this.ctx.fillStyle = getComputedStyle(this.contentEl).getPropertyValue("--background-primary") || "#111";
+    this.ctx.fillRect(0, 0, width, height);
+    this.ctx.setTransform(ratio * this.zoom, 0, 0, ratio * this.zoom, ratio * this.panX, ratio * this.panY);
+    const styles = getComputedStyle(this.contentEl);
+    const normalColor = styles.getPropertyValue("--text-normal").trim() || "#d7d7d7";
+    const mutedColor = styles.getPropertyValue("--text-muted").trim() || "#9a9a9a";
+    const faintColor = styles.getPropertyValue("--background-modifier-border").trim() || "#555";
+
+    this.edges.forEach((edge) => {
+      this.ctx.beginPath();
+      this.ctx.moveTo(edge.source.x, edge.source.y);
+      this.ctx.lineTo(edge.target.x, edge.target.y);
+      this.ctx.globalAlpha = 0.2 + Math.min(0.22, signal * 0.12);
+      this.ctx.strokeStyle = mutedColor;
+      this.ctx.lineWidth = Math.min(2, 0.65 + edge.weight * 0.12 + signal * 0.16) / this.zoom;
+      this.ctx.stroke();
+    });
+    this.ctx.globalAlpha = 1;
+
+    this.nodes.forEach((node, index) => {
+      const isHot = node === this.hoveredNode;
+      const breath = Math.sin(time * 4.5 + node.pulse + index * 0.05) * 0.5 + 0.5;
+      const reactiveRadius = node.radius + signal * (1.2 + breath * 2.6) + (isHot ? 2.5 : 0);
+
+      this.ctx.beginPath();
+      this.ctx.arc(node.x, node.y, reactiveRadius, 0, Math.PI * 2);
+      this.ctx.fillStyle = isHot ? normalColor : mutedColor;
+      this.ctx.globalAlpha = isHot ? 0.92 : 0.54 + Math.min(0.12, signal * 0.06);
+      this.ctx.fill();
+      this.ctx.lineWidth = (isHot ? 1.7 : 0.9) / this.zoom;
+      this.ctx.globalAlpha = isHot ? 0.82 : 0.36;
+      this.ctx.strokeStyle = normalColor;
+      this.ctx.stroke();
+      this.ctx.globalAlpha = 1;
+
+      if ((isHot || this.zoom > 1.02) && reactiveRadius > 7) {
+        this.ctx.font = `${Math.max(10, 11 / this.zoom)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        this.ctx.globalAlpha = isHot ? 0.88 : 0.48;
+        this.ctx.fillStyle = isHot ? normalColor : faintColor;
+        this.ctx.textAlign = "center";
+        this.ctx.textBaseline = "top";
+        this.ctx.fillText(node.label.slice(0, 34), node.x, node.y + reactiveRadius + 7 / this.zoom);
+        this.ctx.globalAlpha = 1;
+      }
+    });
+
+    if (this.nodes.length === 0) {
+      this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      this.ctx.fillStyle = "rgba(180, 188, 202, 0.85)";
+      this.ctx.font = "14px -apple-system, BlinkMacSystemFont, sans-serif";
+      this.ctx.textAlign = "center";
+      this.ctx.fillText("No markdown links found yet", cssWidth / 2, cssHeight / 2);
+    }
+  }
+
+  getGraphPoint(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left - this.panX) / this.zoom,
+      y: (event.clientY - rect.top - this.panY) / this.zoom,
+    };
+  }
+
+  findNodeAt(x, y) {
+    for (let index = this.nodes.length - 1; index >= 0; index -= 1) {
+      const node = this.nodes[index];
+      const radius = node.radius + Math.max(8, this.audioLevel * 24);
+      const dx = x - node.x;
+      const dy = y - node.y;
+      if (dx * dx + dy * dy <= radius * radius) {
+        return node;
+      }
+    }
+    return null;
   }
 }
 
@@ -4944,6 +5789,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.vaultPet = null;
 
     this.registerView(VIEW_TYPE, (leaf) => new OpenAgentView(leaf, this));
+    this.registerView(VOICE_GRAPH_VIEW_TYPE, (leaf) => new OpenAgentVoiceGraphView(leaf, this));
     this.registerCanvasEditorTrackingExtension();
     this.settingTab = new OpenAgentSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -5022,6 +5868,14 @@ module.exports = class OpenAgentPlugin extends Plugin {
       id: "openagent-open-panel",
       name: "Open tasks",
       callback: () => this.activateView(),
+    });
+
+    this.addCommand({
+      id: "openagent-open-voice-graph",
+      name: "Open voice graph",
+      callback: () => {
+        void this.activateVoiceGraphView();
+      },
     });
 
     this.addCommand({
@@ -5130,6 +5984,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       // Ignore persistence failures during plugin teardown.
     }
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
+    this.app.workspace.getLeavesOfType(VOICE_GRAPH_VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
 
   async persistPluginState() {
@@ -5294,8 +6149,22 @@ module.exports = class OpenAgentPlugin extends Plugin {
       || this.getVaultBasePath();
   }
 
-  getVaultPetQuickChatContext() {
-    const file = this.app.workspace.activeLeaf?.view?.file || this.app.workspace.getActiveFile();
+  getVaultPetQuickChatContext(options = {}) {
+    const preferCanvas = options.preferCanvas === true;
+    const preferVaultCanvas = options.preferVaultCanvas === true;
+    const vaultCanvasFile = preferVaultCanvas ? this.getVaultRootCanvasFile() : null;
+    const explicitFile = options.file instanceof TFile ? options.file : null;
+    const activeLeafFile = this.app.workspace.activeLeaf?.view?.file;
+    const activeFile = activeLeafFile instanceof TFile ? activeLeafFile : null;
+    const canvasFile = this.resolver.getActiveCanvasView()?.file;
+    const activeCanvasFile = canvasFile instanceof TFile ? canvasFile : null;
+    const workspaceActiveFile = this.app.workspace.getActiveFile();
+    const file = explicitFile
+      || vaultCanvasFile
+      || (preferCanvas ? activeCanvasFile : activeFile)
+      || workspaceActiveFile
+      || activeCanvasFile
+      || activeFile;
     const filePath = file instanceof TFile ? String(file.path || "").trim() : "";
     const vaultBasePath = this.getVaultBasePath();
     const absolutePath = filePath && vaultBasePath ? path.resolve(vaultBasePath, filePath) : "";
@@ -5312,8 +6181,38 @@ module.exports = class OpenAgentPlugin extends Plugin {
       absolutePath,
       selectedText: "",
       cwd,
+      targetCanvasPath: vaultCanvasFile?.path || "",
       selectionContext,
     };
+  }
+
+  getVaultRootCanvasFile() {
+    const rootCanvasFiles = this.app.vault.getFiles()
+      .filter((file) => file instanceof TFile && file.extension === "canvas")
+      .filter((file) => {
+        const filePath = String(file.path || "").trim();
+        return filePath && !filePath.includes("/") && !filePath.startsWith(".");
+      })
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (rootCanvasFiles.length === 0) {
+      return null;
+    }
+
+    const vaultName = String(this.app.vault.getName?.() || "").trim();
+    const vaultBaseName = path.basename(this.getVaultBasePath() || "");
+    const preferredNames = [
+      vaultName ? `${vaultName} Vault.canvas` : "",
+      vaultBaseName ? `${vaultBaseName} Vault.canvas` : "",
+      vaultName ? `${vaultName}.canvas` : "",
+      vaultBaseName ? `${vaultBaseName}.canvas` : "",
+      "Vault.canvas",
+      DEFAULT_WORKSPACE_CANVAS_FILE,
+    ]
+      .map((name) => name.toLowerCase())
+      .filter(Boolean);
+
+    return rootCanvasFiles.find((file) => preferredNames.includes(basenameVaultPath(file.path).toLowerCase()))
+      || rootCanvasFiles[0];
   }
 
   buildVaultPetQuickChatSelectionContext({ file, filePath, absolutePath }) {
@@ -5335,7 +6234,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
           text,
         },
       ],
-      markdownFiles: normalizedFilePath
+      markdownFiles: normalizedFilePath && !/\.canvas$/i.test(normalizedFilePath)
         ? [
             {
               id: `file-${shortHash(normalizedFilePath)}`,
@@ -5407,8 +6306,18 @@ module.exports = class OpenAgentPlugin extends Plugin {
     const requestedCwd = String(context.cwd || "").trim()
       || this.getDefaultCwdForVaultPetSelection(context.filePath, sourceSelection);
     const cwd = normalizeRepoPath(requestedCwd || this.getVaultBasePath());
-    const workspace = await this.ensureWorkspaceForRepoPath(cwd, path.basename(cwd || "Vault"));
-    const canvasPath = joinVaultPath(workspace.folderPath, workspace.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE);
+    const targetCanvasPath = String(context.targetCanvasPath || "").trim();
+    let workspace = null;
+    let canvasPath = targetCanvasPath;
+    if (canvasPath) {
+      const targetCanvasFile = this.app.vault.getAbstractFileByPath(canvasPath);
+      if (!(targetCanvasFile instanceof TFile) || targetCanvasFile.extension !== "canvas") {
+        throw new Error(`Canvas file not found: ${canvasPath}`);
+      }
+    } else {
+      workspace = await this.ensureWorkspaceForRepoPath(cwd, path.basename(cwd || "Vault"));
+      canvasPath = joinVaultPath(workspace.folderPath, workspace.defaultCanvas || DEFAULT_WORKSPACE_CANVAS_FILE);
+    }
     const sourceFilePath = String(context.filePath || "").trim();
     const absolutePath = String(context.absolutePath || "").trim();
     const title = context.mode === "quick"
@@ -5419,7 +6328,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       title,
       text: displayText,
     });
-    const markdownFiles = sourceFilePath
+    const markdownFiles = sourceFilePath && !/\.canvas$/i.test(sourceFilePath)
       ? [
           {
             id: `file-${shortHash(sourceFilePath)}`,
@@ -5432,7 +6341,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       : [];
 
     return {
-      cwd: workspace.repoPath,
+      cwd: workspace?.repoPath || cwd,
       selectionContext: {
         canvasPath,
         canvasName: basenameVaultPath(canvasPath).replace(/\.canvas$/i, ""),
@@ -8534,6 +9443,16 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.app.workspace.revealLeaf(leaf);
     this.requestViewRefresh();
+  }
+
+  async activateVoiceGraphView() {
+    let leaf = this.app.workspace.getLeavesOfType(VOICE_GRAPH_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = this.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VOICE_GRAPH_VIEW_TYPE, active: true });
+    }
+
+    this.app.workspace.revealLeaf(leaf);
   }
 
   async openThreadList() {

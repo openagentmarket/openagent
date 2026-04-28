@@ -32,6 +32,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
 const TASK_STORE_SAVE_DEBOUNCE_MS = 75;
 const TASK_MESSAGE_PREVIEW_LENGTH = 280;
+const REALTIME_SDP_WAIT_MS = 12_000;
+const REALTIME_SESSION_TTL_MS = 30 * 60_000;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -193,6 +195,27 @@ function compactMessageText(value, maxLength = 0) {
 
   const suffix = "...";
   return `${compact.slice(0, Math.max(0, maxLength - suffix.length)).trimEnd()}${suffix}`;
+}
+
+function normalizeRuntimeErrorMessage(value) {
+  const raw = String(value?.message || value || "Unknown runtime error").trim();
+  if (!raw) {
+    return "Unknown runtime error";
+  }
+
+  let message = raw;
+  try {
+    const parsed = JSON.parse(raw);
+    message = String(parsed?.fields?.message || parsed?.message || raw).trim();
+  } catch {
+    message = raw;
+  }
+
+  if (message.includes("codex/realtime/calls") && message.includes("404")) {
+    return "Codex realtime WebRTC is unavailable for this ChatGPT session: the realtime calls endpoint returned 404 Not Found.";
+  }
+
+  return compactMessageText(message, 360);
 }
 
 function buildTaskMessageSummary(task) {
@@ -532,6 +555,54 @@ class CodexAppServerClient {
     });
   }
 
+  async startThreadForRealtime(options = {}) {
+    await this.start();
+    const cwd = normalizeWorkingDirectory(options.cwd || process.cwd());
+    const runtimeConfig = normalizeRuntimeConfig(options.runtimeConfig);
+    const sandboxVariants = buildThreadSandboxVariants(runtimeConfig.sandboxMode);
+    let lastError = null;
+
+    for (const sandbox of sandboxVariants) {
+      try {
+        const response = await this.request("thread/start", {
+          cwd,
+          approvalPolicy: runtimeConfig.approvalPolicy,
+          sandbox,
+          ephemeral: options.ephemeral !== false,
+        });
+        return response?.thread || response;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error("Unable to start realtime Codex thread.");
+  }
+
+  startRealtimeConversation(params = {}) {
+    return this.request("thread/realtime/start", params);
+  }
+
+  appendRealtimeText(threadId, text) {
+    return this.request("thread/realtime/appendText", {
+      threadId,
+      text,
+    });
+  }
+
+  appendRealtimeAudio(threadId, audio) {
+    return this.request("thread/realtime/appendAudio", {
+      threadId,
+      audio,
+    });
+  }
+
+  stopRealtimeConversation(threadId) {
+    return this.request("thread/realtime/stop", {
+      threadId,
+    });
+  }
+
   request(method, params) {
     return new Promise((resolve, reject) => {
       if (!this.process || this.process.killed) {
@@ -855,6 +926,218 @@ class TaskStreamHub {
   }
 }
 
+class RealtimeSessionHub {
+  constructor() {
+    this.sessions = new Map();
+    this.subscribers = new Map();
+  }
+
+  createSession(session) {
+    const now = Date.now();
+    const normalized = {
+      id: String(session.id || `voice-${stableHash(`${now}-${Math.random()}`)}`),
+      threadId: String(session.threadId || ""),
+      createdAt: session.createdAt || nowIso(),
+      updatedAt: nowIso(),
+      expiresAt: now + REALTIME_SESSION_TTL_MS,
+      transcript: "",
+      answerSdp: "",
+      lastError: "",
+      closed: false,
+      sdpWaiters: [],
+    };
+    this.sessions.set(normalized.id, normalized);
+    return normalized;
+  }
+
+  getSession(sessionId) {
+    const session = this.sessions.get(String(sessionId || ""));
+    if (!session) {
+      return null;
+    }
+    if (Date.now() > Number(session.expiresAt || 0)) {
+      this.closeSession(session.id, "expired");
+      return null;
+    }
+    return session;
+  }
+
+  findSessionByThreadId(threadId) {
+    const normalizedThreadId = String(threadId || "").trim();
+    if (!normalizedThreadId) {
+      return null;
+    }
+    for (const session of this.sessions.values()) {
+      if (!session.closed && session.threadId === normalizedThreadId) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  waitForSdp(sessionId, timeoutMs = REALTIME_SDP_WAIT_MS) {
+    const session = this.getSession(sessionId);
+    if (!session) {
+      return Promise.reject(new Error("Realtime session not found."));
+    }
+    if (session.answerSdp) {
+      return Promise.resolve(session.answerSdp);
+    }
+    if (session.lastError) {
+      return Promise.reject(new Error(session.lastError));
+    }
+
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          session.sdpWaiters = session.sdpWaiters.filter((entry) => entry !== waiter);
+          reject(new Error(session.lastError || "Timed out waiting for realtime SDP answer."));
+        }, timeoutMs),
+      };
+      session.sdpWaiters.push(waiter);
+    });
+  }
+
+  applyNotification(method, params = {}) {
+    const session = this.findSessionByThreadId(params.threadId);
+    if (!session) {
+      return false;
+    }
+    session.updatedAt = nowIso();
+
+    if (method === "thread/realtime/sdp") {
+      session.answerSdp = String(params.sdp || "");
+      for (const waiter of session.sdpWaiters.splice(0)) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(session.answerSdp);
+      }
+      this.publish(session.id, "sdp", { sessionId: session.id, threadId: session.threadId, sdp: session.answerSdp });
+      return true;
+    }
+
+    if (method === "thread/realtime/transcript/delta") {
+      const delta = String(params.delta || "");
+      if (delta) {
+        session.transcript = `${session.transcript || ""}${delta}`;
+      }
+      this.publish(session.id, "transcript.delta", {
+        sessionId: session.id,
+        threadId: session.threadId,
+        role: String(params.role || ""),
+        delta,
+        transcript: session.transcript,
+      });
+      return true;
+    }
+
+    if (method === "thread/realtime/transcript/done") {
+      const text = String(params.text || "");
+      if (text && String(params.role || "") === "user") {
+        session.transcript = text;
+      }
+      this.publish(session.id, "transcript.done", {
+        sessionId: session.id,
+        threadId: session.threadId,
+        role: String(params.role || ""),
+        text,
+        transcript: session.transcript,
+      });
+      return true;
+    }
+
+    if (method === "thread/realtime/error") {
+      this.publish(session.id, "error", {
+        sessionId: session.id,
+        threadId: session.threadId,
+        message: normalizeRuntimeErrorMessage(params.message || "Realtime voice failed."),
+      });
+      return true;
+    }
+
+    if (method === "thread/realtime/closed") {
+      this.closeSession(session.id, String(params.reason || "closed"));
+      return true;
+    }
+
+    if (method === "thread/realtime/started") {
+      this.publish(session.id, "started", {
+        sessionId: session.id,
+        threadId: session.threadId,
+        codexSessionId: params.sessionId || null,
+      });
+      return true;
+    }
+
+    return method.startsWith("thread/realtime/");
+  }
+
+  failActiveSessions(reason = "Realtime voice failed.") {
+    const message = normalizeRuntimeErrorMessage(reason || "Realtime voice failed.");
+    for (const session of this.sessions.values()) {
+      if (session.closed) {
+        continue;
+      }
+      session.lastError = message;
+      for (const waiter of session.sdpWaiters.splice(0)) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error(message));
+      }
+      this.publish(session.id, "error", {
+        sessionId: session.id,
+        threadId: session.threadId,
+        message,
+      });
+    }
+  }
+
+  subscribe(sessionId, response) {
+    const bucket = this.subscribers.get(sessionId) || new Set();
+    bucket.add(response);
+    this.subscribers.set(sessionId, bucket);
+  }
+
+  unsubscribe(sessionId, response) {
+    const bucket = this.subscribers.get(sessionId);
+    if (!bucket) {
+      return;
+    }
+    bucket.delete(response);
+    if (bucket.size === 0) {
+      this.subscribers.delete(sessionId);
+    }
+  }
+
+  publish(sessionId, event, payload) {
+    const bucket = this.subscribers.get(sessionId);
+    if (!bucket) {
+      return;
+    }
+    const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const response of bucket) {
+      response.write(message);
+    }
+  }
+
+  closeSession(sessionId, reason = "closed") {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return;
+    }
+    session.closed = true;
+    for (const waiter of session.sdpWaiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(`Realtime session closed: ${reason}`));
+    }
+    this.publish(sessionId, "closed", {
+      sessionId,
+      threadId: session.threadId,
+      reason,
+    });
+  }
+}
+
 class OpenAgentDaemon {
   constructor() {
     ensureDir(OPENAGENT_HOME);
@@ -862,6 +1145,7 @@ class OpenAgentDaemon {
     this.locator = new DesktopCodexLocator();
     this.store = new TaskStore(STATE_PATH);
     this.streamHub = new TaskStreamHub();
+    this.realtimeHub = new RealtimeSessionHub();
     this.client = new CodexAppServerClient({
       binaryPath: this.locator.resolveEmbeddedCodexPath(),
       cwd: process.cwd(),
@@ -954,11 +1238,18 @@ class OpenAgentDaemon {
   }
 
   handleRuntimeError(error) {
-    this.lastRuntimeError = String(error?.message || error || "Unknown runtime error");
+    this.lastRuntimeError = normalizeRuntimeErrorMessage(error);
+    if (this.lastRuntimeError.toLowerCase().includes("realtime")) {
+      this.realtimeHub.failActiveSessions(this.lastRuntimeError);
+    }
   }
 
   handleRuntimeNotification(notification) {
     const { method, params } = notification;
+    if (this.realtimeHub.applyNotification(method, params)) {
+      return;
+    }
+
     const task = this.store.findTaskByThreadId(params?.threadId);
     if (!task) {
       return;
@@ -1009,6 +1300,85 @@ class OpenAgentDaemon {
       default:
         return;
     }
+  }
+
+  async startRealtimeVoiceSession(body = {}) {
+    const offerSdp = String(body.offerSdp || "").trim();
+    if (!offerSdp) {
+      throw new Error("Voice Graph realtime mode requires a WebRTC SDP offer.");
+    }
+    const cwd = normalizeWorkingDirectory(body.cwd || process.cwd());
+    const runtimeConfig = normalizeRuntimeConfig(body.runtimeConfig || DEFAULT_RUNTIME_CONFIG);
+    const thread = await this.client.startThreadForRealtime({
+      cwd,
+      runtimeConfig,
+      ephemeral: true,
+    });
+    const threadId = String(thread?.id || "").trim();
+    if (!threadId) {
+      throw new Error("Codex app-server did not return a realtime thread id.");
+    }
+
+    const session = this.realtimeHub.createSession({
+      threadId,
+    });
+    const prompt = String(body.prompt || "").trim()
+      || "You are OpenAgent Voice Graph. Transcribe and respond conversationally. Keep replies concise unless the user asks for detail.";
+
+    try {
+      await this.client.startRealtimeConversation({
+        threadId,
+        outputModality: String(body.outputModality || "text") === "audio" ? "audio" : "text",
+        prompt,
+        sessionId: session.id,
+        transport: {
+          type: "webrtc",
+          sdp: offerSdp,
+        },
+        voice: body.voice || null,
+      });
+      const answerSdp = await this.realtimeHub.waitForSdp(session.id);
+      return {
+        sessionId: session.id,
+        threadId,
+        answerSdp,
+      };
+    } catch (error) {
+      this.realtimeHub.closeSession(session.id, String(error?.message || error));
+      throw error;
+    }
+  }
+
+  async appendRealtimeVoiceAudio(sessionId, body = {}) {
+    const session = this.realtimeHub.getSession(sessionId);
+    if (!session) {
+      throw new Error("Realtime session not found.");
+    }
+    const data = String(body?.audio?.data || body?.data || "").trim();
+    if (!data) {
+      return { appended: false };
+    }
+    await this.client.appendRealtimeAudio(session.threadId, {
+      data,
+      sampleRate: Number(body?.audio?.sampleRate || body?.sampleRate || 24_000),
+      numChannels: Number(body?.audio?.numChannels || body?.numChannels || 1),
+      samplesPerChannel: Number(body?.audio?.samplesPerChannel || body?.samplesPerChannel || 0) || null,
+      itemId: body?.audio?.itemId || body?.itemId || null,
+    });
+    return { appended: true };
+  }
+
+  async stopRealtimeVoiceSession(sessionId) {
+    const session = this.realtimeHub.getSession(sessionId);
+    if (!session) {
+      return { stopped: false };
+    }
+    try {
+      await this.client.stopRealtimeConversation(session.threadId);
+    } finally {
+      this.realtimeHub.closeSession(session.id, "stopped");
+    }
+    return { stopped: true };
   }
 
   buildCanvasBinding(selectionContext, existingBinding = {}, overrides = {}) {
@@ -1591,6 +1961,51 @@ class OpenAgentDaemon {
         response.write("event: ready\ndata: {}\n\n");
         this.streamHub.subscribe(taskId, response);
         request.on("close", () => this.streamHub.unsubscribe(taskId, response));
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/voice/realtime/start") {
+        const body = await readRequestBody(request);
+        const session = await this.startRealtimeVoiceSession(body);
+        sendJson(response, 200, session);
+        return;
+      }
+
+      if (request.method === "POST" && /^\/voice\/realtime\/[^/]+\/audio$/.test(pathname)) {
+        const body = await readRequestBody(request);
+        const sessionId = decodeURIComponent(pathname.split("/")[3] || "");
+        const result = await this.appendRealtimeVoiceAudio(sessionId, body);
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && /^\/voice\/realtime\/[^/]+\/stop$/.test(pathname)) {
+        const sessionId = decodeURIComponent(pathname.split("/")[3] || "");
+        const result = await this.stopRealtimeVoiceSession(sessionId);
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && /^\/voice\/realtime\/[^/]+\/stream$/.test(pathname)) {
+        const sessionId = decodeURIComponent(pathname.split("/")[3] || "");
+        const session = this.realtimeHub.getSession(sessionId);
+        if (!session) {
+          sendError(response, 404, "Realtime session not found.");
+          return;
+        }
+
+        response.writeHead(200, {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+        });
+        response.write(`event: ready\ndata: ${JSON.stringify({
+          sessionId: session.id,
+          threadId: session.threadId,
+          transcript: session.transcript,
+        })}\n\n`);
+        this.realtimeHub.subscribe(sessionId, response);
+        request.on("close", () => this.realtimeHub.unsubscribe(sessionId, response));
         return;
       }
 
