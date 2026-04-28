@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ export const OBSIDIAN_CONFIG_PATH = path.join(
   "obsidian",
   "obsidian.json",
 );
+export const DEFAULT_SMOKE_VAULT_PATH = "/Users/applefather/Documents/smoke-test";
 
 export function readJson(filePath, fallback = null) {
   try {
@@ -75,6 +77,81 @@ export function resolveOpenVaultPath(options = {}) {
   throw new Error(
     "No open Obsidian vault was found in obsidian.json. Set OPENAGENT_OBSIDIAN_VAULT=/path/to/vault to choose one explicitly.",
   );
+}
+
+export function resolveSmokeVaultPath(options = {}) {
+  const env = options.env || process.env;
+  const explicitVaultPath = env.OPENAGENT_OBSIDIAN_VAULT || env.OBSIDIAN_VAULT_PATH;
+  if (explicitVaultPath) {
+    return normalizeDirectoryPath(explicitVaultPath);
+  }
+
+  const defaultVaultPath = resolveDefaultSmokeVaultPath();
+  if (defaultVaultPath) {
+    return defaultVaultPath;
+  }
+
+  throw new Error(
+    `Default smoke vault does not exist: ${DEFAULT_SMOKE_VAULT_PATH}. Set OPENAGENT_OBSIDIAN_VAULT=/path/to/vault to choose one explicitly.`,
+  );
+}
+
+export function ensureSmokeVaultReady(vaultPath) {
+  const normalizedVaultPath = normalizeDirectoryPath(vaultPath);
+  fs.mkdirSync(path.join(normalizedVaultPath, ".obsidian"), { recursive: true });
+  const pluginListPath = ensureCommunityPluginEnabled(normalizedVaultPath, "openagent");
+  const registration = ensureObsidianVaultRegistered(normalizedVaultPath);
+
+  return {
+    ...registration,
+    pluginListPath,
+    vaultPath: normalizedVaultPath,
+  };
+}
+
+export function openObsidianVault(vaultPath, options = {}) {
+  const normalizedVaultPath = path.resolve(String(vaultPath || ""));
+  const vaultName = path.basename(normalizedVaultPath);
+  const filePath = String(options.file || "");
+  const openByNameUrl = buildObsidianOpenUrl(vaultName, filePath);
+
+  try {
+    execFileSync("open", [openByNameUrl], { stdio: "ignore" });
+    return;
+  } catch {
+    if (!options.vaultId) {
+      throw new Error(`Failed to open Obsidian vault: ${normalizedVaultPath}`);
+    }
+  }
+
+  execFileSync("open", [buildObsidianOpenUrl(options.vaultId, filePath)], { stdio: "ignore" });
+}
+
+function resolveDefaultSmokeVaultPath() {
+  if (!fs.existsSync(DEFAULT_SMOKE_VAULT_PATH)) {
+    return "";
+  }
+
+  const directVaultPath = path.join(DEFAULT_SMOKE_VAULT_PATH, ".obsidian");
+  if (fs.existsSync(directVaultPath)) {
+    return normalizeDirectoryPath(DEFAULT_SMOKE_VAULT_PATH);
+  }
+
+  const nestedVaultPath = path.join(DEFAULT_SMOKE_VAULT_PATH, path.basename(DEFAULT_SMOKE_VAULT_PATH));
+  if (fs.existsSync(path.join(nestedVaultPath, ".obsidian"))) {
+    return normalizeDirectoryPath(nestedVaultPath);
+  }
+
+  return normalizeDirectoryPath(DEFAULT_SMOKE_VAULT_PATH);
+}
+
+function buildObsidianOpenUrl(vault, filePath) {
+  const params = new URLSearchParams({ vault: String(vault) });
+  if (filePath) {
+    params.set("file", filePath);
+  }
+
+  return `obsidian://open?${params.toString()}`;
 }
 
 export function isCommunityPluginEnabled(vaultPath, pluginId) {

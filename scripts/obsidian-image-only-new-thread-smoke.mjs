@@ -1,13 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { ensureSmokeVaultReady, openObsidianVault, resolveSmokeVaultPath } from "./obsidian-vault-utils.mjs";
 
 import { writeVisualSmokePng } from "./lib/visual-smoke-image.mjs";
 
 const repoRoot = process.cwd();
-const vaultPath = resolveOpenVaultPath();
+const vaultPath = resolveSmokeVaultPath();
+process.env.OPENAGENT_OBSIDIAN_VAULT ||= vaultPath;
+const smokeVaultRegistration = ensureSmokeVaultReady(vaultPath);
 const smokeDirName = "OpenAgent Smoke";
 const smokeDir = path.join(vaultPath, smokeDirName);
 const controlDir = path.join(vaultPath, ".openagent");
@@ -131,6 +133,7 @@ function restartObsidian() {
   waitForObsidianProcess(false, 15_000);
   enableDevSmokeRequests();
   execFileSync("open", ["-a", "Obsidian"], { stdio: "ignore" });
+  openObsidianVault(vaultPath, { vaultId: smokeVaultRegistration.vaultId });
   waitForObsidianProcess(true, 20_000);
 }
 
@@ -319,17 +322,6 @@ function assertTask(task) {
   if (String(task?.cwd || "") !== repoRoot) {
     throw new Error(`Unexpected task cwd: ${String(task?.cwd || "")}`);
   }
-}
-
-function resolveOpenVaultPath() {
-  const configPath = path.join(os.homedir(), "Library", "Application Support", "obsidian", "obsidian.json");
-  const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const openVaultEntry = Object.values(parsed?.vaults || {}).find((vault) => vault?.open && vault?.path);
-  if (!openVaultEntry?.path) {
-    throw new Error("No open Obsidian vault was found in obsidian.json.");
-  }
-
-  return path.resolve(String(openVaultEntry.path));
 }
 
 function sleep(ms) {

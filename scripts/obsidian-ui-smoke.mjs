@@ -1,11 +1,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { ensureSmokeVaultReady, openObsidianVault, resolveSmokeVaultPath } from "./obsidian-vault-utils.mjs";
 
 const repoRoot = process.cwd();
-const vaultPath = resolveOpenVaultPath();
+const vaultPath = resolveSmokeVaultPath();
+process.env.OPENAGENT_OBSIDIAN_VAULT ||= vaultPath;
+const smokeVaultRegistration = ensureSmokeVaultReady(vaultPath);
 const smokeDirName = "OpenAgent Smoke";
 const smokeDir = path.join(vaultPath, smokeDirName);
 const canvasPathRelative = `${smokeDirName}/smoke.canvas`;
@@ -89,6 +91,7 @@ function restartObsidian() {
   spawnSync("osascript", ["-e", 'tell application "Obsidian" to quit'], { stdio: "ignore" });
   waitForObsidianProcess(false, 15_000);
   execFileSync("open", ["-a", "Obsidian"], { stdio: "ignore" });
+  openObsidianVault(vaultPath, { vaultId: smokeVaultRegistration.vaultId });
   waitForObsidianProcess(true, 20_000);
   sleep(5_000);
 }
@@ -181,17 +184,6 @@ function waitForObsidianProcess(shouldExist, timeoutMs) {
   }
 
   throw new Error(shouldExist ? "Obsidian did not start in time." : "Obsidian did not quit in time.");
-}
-
-function resolveOpenVaultPath() {
-  const configPath = path.join(os.homedir(), "Library", "Application Support", "obsidian", "obsidian.json");
-  const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const openVaultEntry = Object.values(parsed?.vaults || {}).find((vault) => vault?.open && vault?.path);
-  if (!openVaultEntry?.path) {
-    throw new Error("No open Obsidian vault was found in obsidian.json.");
-  }
-
-  return path.resolve(String(openVaultEntry.path));
 }
 
 function escapeAppleScriptString(value) {
