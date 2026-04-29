@@ -37,6 +37,7 @@ const PLUGIN_LOGO_PATH = path.join(__dirname, PLUGIN_LOGO_FILE_NAME);
 const VAULT_PET_MASCOT_FILE_NAME = "vault-pet-mascot.png";
 const VAULT_PET_MASCOT_PATH = path.join(__dirname, VAULT_PET_MASCOT_FILE_NAME);
 const DEFAULT_SETTINGS = Object.freeze({
+  automationFolder: "",
   daemonLaunchCommand: "",
   daemonLaunchCwd: "",
   daemonSandboxMode: "workspace-write",
@@ -49,6 +50,9 @@ const DEFAULT_SETTINGS = Object.freeze({
 const REPO_WORKSPACE_DIR_NAME = ".openagent";
 const WORKSPACE_CONFIG_FILE_NAME = "workspace.json";
 const DEFAULT_WORKSPACE_CANVAS_FILE = "Main.canvas";
+const WORKSPACE_AUTOMATION_DIR_NAME = "Automations";
+const DEFAULT_DAILY_VAULT_REVIEW_AUTOMATION_FILE = "Daily Vault Review.md";
+const DEFAULT_DAILY_VAULT_REVIEW_CWD = "/Users/applefather/Documents/Applefather";
 const WORKSPACE_INDEX_WAIT_MS = 4_000;
 const WORKSPACE_INDEX_POLL_MS = 100;
 const CANVAS_EDITOR_TEXT_CACHE_TTL_MS = 10_000;
@@ -247,6 +251,47 @@ function joinVaultPath(...parts) {
     .map((part) => String(part || "").replace(/^\/+|\/+$/g, ""))
     .filter(Boolean)
     .join("/");
+}
+
+function parseAutomationScalar(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    return raw.slice(1, -1);
+  }
+  if (raw === "true") {
+    return true;
+  }
+  if (raw === "false") {
+    return false;
+  }
+  return raw;
+}
+
+function parseAutomationFrontmatter(raw) {
+  const text = String(raw || "");
+  if (!text.startsWith("---\n")) {
+    return { data: {}, body: text };
+  }
+
+  const endIndex = text.indexOf("\n---", 4);
+  if (endIndex < 0) {
+    return { data: {}, body: text };
+  }
+
+  const frontmatter = text.slice(4, endIndex).trim();
+  const body = text.slice(endIndex + 4).replace(/^\n+/, "");
+  const data = {};
+  frontmatter.split(/\r?\n/).forEach((line) => {
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (!match) {
+      return;
+    }
+    data[match[1]] = parseAutomationScalar(match[2]);
+  });
+  return { data, body };
 }
 
 function dirnameVaultPath(value) {
@@ -1756,6 +1801,18 @@ class OpenAgentApiClient {
 
   getTasks() {
     return this.request("GET", "/tasks");
+  }
+
+  getAutomations() {
+    return this.request("GET", "/automations");
+  }
+
+  syncAutomations(body = {}) {
+    return this.request("PUT", "/automations/sync", body);
+  }
+
+  runAutomation(automationId, body = {}) {
+    return this.request("POST", `/automations/${encodeURIComponent(automationId)}/run`, body);
   }
 
   getTask(taskId) {
@@ -5436,6 +5493,21 @@ class OpenAgentSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Automation folder")
+      .setDesc("Optional extra vault folder for automations. By default OpenAgent uses each workspace's Automations folder next to Main.canvas.")
+      .addText((text) => {
+        text
+          .setPlaceholder("Leave blank for workspace Automations folders")
+          .setValue(this.plugin.settings.automationFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.automationFolder = String(value || "").trim();
+            await this.plugin.persistPluginState();
+            await this.plugin.ensureDefaultAutomationFile();
+            this.plugin.scheduleAutomationSync();
+          });
+      });
+
+    new Setting(containerEl)
       .setName("Codex server launch command")
       .setDesc("Optional. When the server is offline, OpenAgent will run this shell command and retry automatically.")
       .addText((text) => {
@@ -5711,6 +5783,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
       ...DEFAULT_SETTINGS,
       ...(savedState.settings || {}),
     };
+    if (this.settings.automationFolder === "OpenAgent/Automations") {
+      this.settings.automationFolder = "";
+    }
     this.settings.daemonSandboxMode = normalizeDaemonSandboxMode(this.settings.daemonSandboxMode);
     this.settings.stopActiveTaskHotkey = normalizeStopHotkeySetting(this.settings.stopActiveTaskHotkey);
     this.uiState = {
@@ -5779,6 +5854,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.workspaceSummaryCacheByConfigPath = new Map();
     this.workspaceSummariesLoadPromise = null;
     this.workspaceSummariesLoaded = false;
+    this.automationSyncTimer = null;
+    this.automationSyncPromise = null;
     this.selectedGroupContextPreviewState = {
       key: "",
       preview: null,
@@ -5802,24 +5879,28 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }, DAEMON_STATUS_POLL_MS));
     this.registerEvent(this.app.vault.on("create", (file) => {
       this.handleWorkspaceConfigMutation(file);
+      this.handleAutomationFileMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
       this.handleVaultPetActivity("create", file);
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
       this.handleWorkspaceConfigMutation(file);
+      this.handleAutomationFileMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
       this.handleVaultPetActivity("modify", file);
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       this.handleWorkspaceConfigMutation(file);
+      this.handleAutomationFileMutation(file);
       this.handleSelectedGroupContextDependencyMutation(file);
       this.handleCanvasFileMutation(file);
       this.handleVaultPetActivity("delete", file);
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
       this.handleWorkspaceConfigMutation(file, oldPath);
+      this.handleAutomationFileMutation(file, oldPath);
       this.handleSelectedGroupContextDependencyMutation(file, oldPath);
       this.handleCanvasFileMutation(file);
       this.handleVaultPetActivity("rename", file);
@@ -5913,6 +5994,22 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "openagent-sync-automations",
+      name: "Sync automations",
+      callback: () => {
+        void this.syncAutomationsWithFeedback();
+      },
+    });
+
+    this.addCommand({
+      id: "openagent-run-daily-vault-review",
+      name: "Run daily vault review",
+      callback: () => {
+        void this.runAutomationWithFeedback("daily-vault-review");
+      },
+    });
+
+    this.addCommand({
       id: "openagent-create-follow-up-node",
       name: "Create follow-up node",
       callback: () => {
@@ -5965,6 +6062,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
       void this.ensurePanelVisibleOnStartup();
     });
     void this.ensureWorkspaceSummariesLoaded();
+    void this.ensureDefaultAutomationFile().then(() => this.syncAutomationsToDaemon()).catch(() => {});
     void this.ensurePluginLogoDataUrlLoaded();
     void this.refreshDaemonStatus();
     void this.refreshTasks().catch(() => {});
@@ -5973,6 +6071,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
   async onunload() {
     window.clearTimeout(this.canvasSelectionCaptureTimer);
     this.canvasSelectionCaptureTimer = null;
+    window.clearTimeout(this.automationSyncTimer);
+    this.automationSyncTimer = null;
     this.disposeActiveStream();
     this.disposeAllRunningTaskStreams();
     this.restoreCanvasPopupMenuPatches();
@@ -7204,6 +7304,164 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     this.workspaceSummariesLoaded = false;
     void this.ensureWorkspaceSummariesLoaded({ force: true });
+  }
+
+  getAutomationFolderVaultPaths() {
+    const roots = [];
+    this.listWorkspaceSummaries().forEach((workspace) => {
+      if (workspace?.folderPath) {
+        roots.push(joinVaultPath(workspace.folderPath, WORKSPACE_AUTOMATION_DIR_NAME));
+      }
+    });
+    const customFolder = String(this.settings.automationFolder || "").trim();
+    if (customFolder) {
+      roots.push(customFolder);
+    }
+    return Array.from(new Set(roots.filter(Boolean)));
+  }
+
+  isAutomationFilePath(vaultPath) {
+    const normalizedPath = String(vaultPath || "").trim();
+    return normalizedPath.endsWith(".md")
+      && this.getAutomationFolderVaultPaths().some((automationFolder) => isVaultPathWithinRoot(normalizedPath, automationFolder));
+  }
+
+  getAutomationFiles() {
+    return this.app.vault.getFiles().filter((file) => this.isAutomationFilePath(file.path));
+  }
+
+  async ensureDefaultAutomationFile() {
+    await this.ensureWorkspaceSummariesLoaded();
+    const activeWorkspace = this.getActiveWorkspace();
+    const workspace = activeWorkspace
+      || this.listWorkspaceSummaries().find((summary) => summary.name === "openagent")
+      || this.listWorkspaceSummaries()[0]
+      || null;
+    const automationFolder = workspace?.folderPath
+      ? joinVaultPath(workspace.folderPath, WORKSPACE_AUTOMATION_DIR_NAME)
+      : (String(this.settings.automationFolder || "").trim() || joinVaultPath(this.getWorkspaceRootVaultPath(), "openagent", WORKSPACE_AUTOMATION_DIR_NAME));
+    await this.ensureVaultFolderExists(automationFolder);
+    const automationPath = joinVaultPath(automationFolder, DEFAULT_DAILY_VAULT_REVIEW_AUTOMATION_FILE);
+    if (this.app.vault.getAbstractFileByPath(automationPath)) {
+      return;
+    }
+
+    await this.writeVaultFile(automationPath, [
+      "---",
+      "openagent: automation",
+      "id: daily-vault-review",
+      "enabled: true",
+      "schedule: \"0 18 * * *\"",
+      `cwd: "${DEFAULT_DAILY_VAULT_REVIEW_CWD}"`,
+      "threadStrategy: resume",
+      "approvalPolicy: never",
+      "sandboxMode: workspace-write",
+      "---",
+      "",
+      "Use the Codex skill [[Codex Skills/daily-vault-review/SKILL|daily-vault-review]] to create or update today's daily review note.",
+      "",
+      "Run the normal daily vault review workflow for /Users/applefather/Documents/Applefather.",
+      "",
+    ].join("\n"));
+  }
+
+  async readAutomationDefinition(file) {
+    if (!(file instanceof TFile) || !this.isAutomationFilePath(file.path)) {
+      return null;
+    }
+
+    const raw = await this.app.vault.cachedRead(file);
+    const parsed = parseAutomationFrontmatter(raw);
+    if (String(parsed.data.openagent || "").trim() !== "automation") {
+      return null;
+    }
+
+    const cwd = String(parsed.data.cwd || "").trim();
+    const prompt = String(parsed.body || "").trim();
+    const id = String(parsed.data.id || basenameVaultPath(file.path).replace(/\.md$/i, "")).trim();
+    return {
+      id,
+      sourcePath: file.path,
+      title: String(parsed.data.title || basenameVaultPath(file.path).replace(/\.md$/i, "")).trim(),
+      enabled: parsed.data.enabled !== false,
+      schedule: String(parsed.data.schedule || "manual").trim() || "manual",
+      cwd,
+      prompt,
+      threadStrategy: String(parsed.data.threadStrategy || "resume").trim() === "new" ? "new" : "resume",
+      runtimeConfig: {
+        approvalPolicy: String(parsed.data.approvalPolicy || "never").trim(),
+        sandboxMode: normalizeDaemonSandboxMode(parsed.data.sandboxMode || this.getSelectedSandboxMode()),
+      },
+    };
+  }
+
+  async readAutomationDefinitions() {
+    const definitions = await Promise.all(this.getAutomationFiles().map((file) => this.readAutomationDefinition(file)));
+    return definitions.filter(Boolean);
+  }
+
+  scheduleAutomationSync() {
+    window.clearTimeout(this.automationSyncTimer);
+    this.automationSyncTimer = window.setTimeout(() => {
+      this.automationSyncTimer = null;
+      void this.syncAutomationsToDaemon().catch(() => {});
+    }, 750);
+  }
+
+  handleAutomationFileMutation(file, oldPath = "") {
+    const nextPath = file instanceof TFile ? String(file.path || "").trim() : "";
+    const previousPath = String(oldPath || "").trim();
+    if (!this.isAutomationFilePath(nextPath) && !this.isAutomationFilePath(previousPath)) {
+      return;
+    }
+
+    this.scheduleAutomationSync();
+  }
+
+  async syncAutomationsToDaemon() {
+    if (this.automationSyncPromise) {
+      return this.automationSyncPromise;
+    }
+
+    this.automationSyncPromise = (async () => {
+      const automations = await this.readAutomationDefinitions();
+      await this.api.syncAutomations({
+        source: this.getAutomationSyncSource(),
+        pruneMissing: true,
+        automations,
+      });
+      return automations;
+    })().finally(() => {
+      this.automationSyncPromise = null;
+    });
+
+    return this.automationSyncPromise;
+  }
+
+  getAutomationSyncSource() {
+    const basePath = String(this.app.vault.adapter?.basePath || "").trim();
+    return basePath ? `vault:${basePath}` : "vault";
+  }
+
+  async syncAutomationsWithFeedback() {
+    try {
+      await this.ensureDefaultAutomationFile();
+      const automations = await this.syncAutomationsToDaemon();
+      new Notice(`Synced ${automations.length} OpenAgent automation${automations.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      new Notice(`Automation sync failed: ${String(error?.message || error)}`);
+    }
+  }
+
+  async runAutomationWithFeedback(automationId) {
+    try {
+      await this.ensureDefaultAutomationFile();
+      await this.syncAutomationsToDaemon();
+      await this.api.runAutomation(automationId, { force: true });
+      new Notice("Daily vault review automation started.");
+    } catch (error) {
+      new Notice(`Automation run failed: ${String(error?.message || error)}`);
+    }
   }
 
   listWorkspaceSummaries() {

@@ -32,6 +32,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
 const TASK_STORE_SAVE_DEBOUNCE_MS = 75;
 const TASK_MESSAGE_PREVIEW_LENGTH = 280;
+const AUTOMATION_SCHEDULER_INTERVAL_MS = 60_000;
+const AUTOMATION_MESSAGE_PREVIEW_LENGTH = 8_000;
 const REALTIME_SDP_WAIT_MS = 12_000;
 const REALTIME_SESSION_TTL_MS = 30 * 60_000;
 
@@ -187,6 +189,11 @@ function parseTaskId(pathname) {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function parseAutomationId(pathname) {
+  const match = /^\/automations\/([^/]+)/.exec(pathname);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 function compactMessageText(value, maxLength = 0) {
   const compact = String(value || "").replace(/\s+/g, " ").trim();
   if (!maxLength || compact.length <= maxLength) {
@@ -250,6 +257,168 @@ function buildTaskMessageSummary(task) {
     lastMessageRole: String(lastMessage?.role || ""),
     lastMessagePreview: compactMessageText(lastMessage?.text || "", TASK_MESSAGE_PREVIEW_LENGTH),
     latestAssistantMessage,
+  };
+}
+
+function normalizeAutomationId(value, fallback = "") {
+  return String(value || fallback || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || `automation-${stableHash(String(fallback || Date.now()))}`;
+}
+
+function parseSimpleCronSchedule(schedule) {
+  const raw = String(schedule || "").trim();
+  const parts = raw.split(/\s+/);
+  if (parts.length !== 5) {
+    return null;
+  }
+
+  const [minuteRaw, hourRaw, dayOfMonth, month, dayOfWeek] = parts;
+  if (dayOfMonth !== "*" || month !== "*" || dayOfWeek !== "*") {
+    return null;
+  }
+
+  const minute = Number(minuteRaw);
+  const hour = Number(hourRaw);
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) {
+    return null;
+  }
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return null;
+  }
+
+  return { minute, hour };
+}
+
+function parseIntervalSchedule(schedule) {
+  const match = /^every\s+(\d+)\s*(minute|minutes|hour|hours|day|days)$/i.exec(String(schedule || "").trim())
+    || /^(\d+)(m|h|d)$/i.exec(String(schedule || "").trim());
+  if (!match) {
+    return 0;
+  }
+
+  const amount = Math.max(1, Number(match[1]) || 0);
+  const unit = String(match[2] || "").toLowerCase();
+  if (unit === "m" || unit.startsWith("minute")) {
+    return amount * 60_000;
+  }
+  if (unit === "h" || unit.startsWith("hour")) {
+    return amount * 60 * 60_000;
+  }
+  if (unit === "d" || unit.startsWith("day")) {
+    return amount * 24 * 60 * 60_000;
+  }
+  return 0;
+}
+
+function computeNextAutomationRunAt(schedule, fromDate = new Date()) {
+  const raw = String(schedule || "").trim();
+  if (!raw || raw.toLowerCase() === "manual") {
+    return null;
+  }
+
+  const intervalMs = parseIntervalSchedule(raw);
+  if (intervalMs > 0) {
+    return new Date(fromDate.getTime() + intervalMs).toISOString();
+  }
+
+  const cron = parseSimpleCronSchedule(raw);
+  if (!cron) {
+    return null;
+  }
+
+  const next = new Date(fromDate.getTime());
+  next.setSeconds(0, 0);
+  next.setHours(cron.hour, cron.minute, 0, 0);
+  if (next.getTime() <= fromDate.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.toISOString();
+}
+
+function formatAutomationTimestamp(value) {
+  const timestamp = String(value || "").trim();
+  if (!timestamp) {
+    return "";
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function latestAutomationAssistantText(automation) {
+  const messages = Array.isArray(automation?.messages) ? automation.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && String(message.text || "").trim()) {
+      return compactMessageText(message.text, 1_500);
+    }
+  }
+  return "";
+}
+
+function createAutomationBinding(input = {}, previous = null) {
+  const sourcePath = String(input.sourcePath || previous?.sourcePath || "").trim();
+  const automationId = normalizeAutomationId(input.id || previous?.automationId, sourcePath);
+  const now = nowIso();
+  const schedule = String(input.schedule || previous?.schedule || "manual").trim() || "manual";
+  const runtimeConfig = normalizeRuntimeConfig(input.runtimeConfig || previous?.runtimeConfig || DEFAULT_RUNTIME_CONFIG);
+  const requestedStatus = String(input.status || "").trim();
+  const status = requestedStatus || (
+    previous?.status === "running" || previous?.status === "starting"
+      ? previous.status
+      : "idle"
+  );
+  const explicitNextRunAt = Object.prototype.hasOwnProperty.call(input, "nextRunAt")
+    ? (input.nextRunAt || null)
+    : undefined;
+  const nextRunAt = explicitNextRunAt !== undefined
+    ? explicitNextRunAt
+    : status === "running" || status === "starting"
+    ? (previous?.nextRunAt || null)
+    : (previous?.schedule === schedule && previous?.nextRunAt ? previous.nextRunAt : computeNextAutomationRunAt(schedule));
+
+  return {
+    automationId,
+    source: String(input.source || previous?.source || "vault").trim() || "vault",
+    sourcePath,
+    title: String(input.title || previous?.title || automationId).trim() || automationId,
+    enabled: input.enabled !== false,
+    schedule,
+    cwd: String(input.cwd || previous?.cwd || "").trim(),
+    prompt: String(input.prompt || previous?.prompt || ""),
+    threadStrategy: String(input.threadStrategy || previous?.threadStrategy || "resume").trim() === "new"
+      ? "new"
+      : "resume",
+    runtimeConfig,
+    threadId: previous?.threadId || null,
+    currentTurnId: previous?.currentTurnId || null,
+    status,
+    lastError: previous?.lastError || "",
+    lastRunAt: previous?.lastRunAt || null,
+    nextRunAt,
+    activeRunId: input.activeRunId || previous?.activeRunId || null,
+    lastRunReport: input.lastRunReport || previous?.lastRunReport || null,
+    runHistory: Array.isArray(input.runHistory)
+      ? input.runHistory
+      : (Array.isArray(previous?.runHistory) ? previous.runHistory : []),
+    messages: Array.isArray(previous?.messages) ? previous.messages : [],
+    createdAt: previous?.createdAt || now,
+    updatedAt: now,
   };
 }
 
@@ -710,8 +879,13 @@ class TaskStore {
     this.state = readJson(filePath, {
       tasks: {},
       channels: {},
+      automations: {},
     });
+    this.state.tasks = this.state.tasks || {};
+    this.state.channels = this.state.channels || {};
+    this.state.automations = this.state.automations || {};
     this.threadTaskIdByThreadId = new Map();
+    this.automationIdByThreadId = new Map();
     this.pendingSaveTimer = null;
     this.isDirty = false;
     this.rebuildIndexes();
@@ -752,6 +926,10 @@ class TaskStore {
     Object.values(this.state.tasks).forEach((task) => {
       this.updateThreadIndex(task, null);
     });
+    this.automationIdByThreadId.clear();
+    Object.values(this.state.automations).forEach((automation) => {
+      this.updateAutomationThreadIndex(automation, null);
+    });
   }
 
   updateThreadIndex(nextTask, previousTask = null) {
@@ -765,6 +943,20 @@ class TaskStore {
 
     if (nextThreadId && taskId) {
       this.threadTaskIdByThreadId.set(nextThreadId, taskId);
+    }
+  }
+
+  updateAutomationThreadIndex(nextAutomation, previousAutomation = null) {
+    const automationId = String(nextAutomation?.automationId || previousAutomation?.automationId || "").trim();
+    const previousThreadId = String(previousAutomation?.threadId || "").trim();
+    const nextThreadId = String(nextAutomation?.threadId || "").trim();
+
+    if (previousThreadId && this.automationIdByThreadId.get(previousThreadId) === automationId) {
+      this.automationIdByThreadId.delete(previousThreadId);
+    }
+
+    if (nextThreadId && automationId) {
+      this.automationIdByThreadId.set(nextThreadId, automationId);
     }
   }
 
@@ -799,6 +991,222 @@ class TaskStore {
 
     const taskId = this.threadTaskIdByThreadId.get(normalizedThreadId);
     return taskId ? this.getTask(taskId) : null;
+  }
+
+  getAutomations() {
+    return Object.values(this.state.automations).map((automation) => ({ ...automation })).sort((left, right) => {
+      return (left.title || left.automationId).localeCompare(right.title || right.automationId);
+    });
+  }
+
+  getAutomation(automationId) {
+    const normalizedId = normalizeAutomationId(automationId);
+    return normalizedId && this.state.automations[normalizedId]
+      ? { ...this.state.automations[normalizedId] }
+      : null;
+  }
+
+  findAutomationByThreadId(threadId) {
+    const normalizedThreadId = String(threadId || "").trim();
+    if (!normalizedThreadId) {
+      return null;
+    }
+
+    const automationId = this.automationIdByThreadId.get(normalizedThreadId);
+    return automationId ? this.getAutomation(automationId) : null;
+  }
+
+  upsertAutomation(automation) {
+    const normalizedAutomation = createAutomationBinding(
+      automation,
+      this.state.automations[normalizeAutomationId(automation?.automationId || automation?.id)]
+    );
+    const previousAutomation = this.state.automations[normalizedAutomation.automationId] || null;
+    this.state.automations[normalizedAutomation.automationId] = normalizedAutomation;
+    this.updateAutomationThreadIndex(normalizedAutomation, previousAutomation);
+    this.scheduleSave();
+    return this.state.automations[normalizedAutomation.automationId];
+  }
+
+  patchAutomation(automationId, patch) {
+    const current = this.getAutomation(automationId);
+    if (!current) {
+      return null;
+    }
+
+    return this.upsertAutomation({
+      ...current,
+      ...patch,
+      automationId: current.automationId,
+    });
+  }
+
+  syncAutomations(incomingAutomations, options = {}) {
+    const source = String(options.source || "vault").trim() || "vault";
+    const incomingIds = new Set();
+    const synced = [];
+
+    for (const automation of Array.isArray(incomingAutomations) ? incomingAutomations : []) {
+      const normalized = createAutomationBinding({
+        ...automation,
+        source,
+      }, this.state.automations[normalizeAutomationId(automation?.id || automation?.automationId, automation?.sourcePath)]);
+      incomingIds.add(normalized.automationId);
+      const previous = this.state.automations[normalized.automationId] || null;
+      this.state.automations[normalized.automationId] = normalized;
+      this.updateAutomationThreadIndex(normalized, previous);
+      synced.push(normalized);
+    }
+
+    if (options.pruneMissing !== false) {
+      Object.values(this.state.automations).forEach((automation) => {
+        if (automation.source === source && !incomingIds.has(automation.automationId)) {
+          this.updateAutomationThreadIndex(null, automation);
+          delete this.state.automations[automation.automationId];
+        }
+      });
+    }
+
+    this.scheduleSave();
+    return synced;
+  }
+
+  listDueAutomations(date = new Date()) {
+    const nowTime = date.getTime();
+    return this.getAutomations().filter((automation) => {
+      if (!automation.enabled || automation.status === "running" || automation.status === "starting") {
+        return false;
+      }
+      const nextRunAt = String(automation.nextRunAt || "").trim();
+      return nextRunAt && Date.parse(nextRunAt) <= nowTime;
+    });
+  }
+
+  appendAutomationDelta(automationId, kind, payload) {
+    const automation = this.getAutomation(automationId);
+    if (!automation) {
+      return null;
+    }
+
+    const messages = Array.isArray(automation.messages) ? [...automation.messages] : [];
+    const streamKey = `${kind}:${payload.turnId || payload.turn_id || "turn"}:${payload.itemId || payload.item_id || "item"}`;
+    const index = messages.findIndex((entry) => entry.streamKey === streamKey);
+    const previous = index >= 0 ? messages[index] : null;
+    const delta = String(payload?.delta || payload?.textDelta || payload?.outputDelta || payload?.output || "");
+    const text = compactMessageText(`${previous?.text || ""}${delta}`, AUTOMATION_MESSAGE_PREVIEW_LENGTH);
+    const nextMessage = {
+      ...(previous || {}),
+      id: previous?.id || streamKey,
+      streamKey,
+      role: kind === "assistant" ? "assistant" : "tool",
+      kind,
+      turnId: payload.turnId || payload.turn_id || null,
+      itemId: payload.itemId || payload.item_id || null,
+      text,
+      updatedAt: nowIso(),
+      createdAt: previous?.createdAt || nowIso(),
+    };
+
+    if (index >= 0) {
+      messages[index] = nextMessage;
+    } else {
+      messages.push(nextMessage);
+    }
+
+    return this.patchAutomation(automationId, { messages });
+  }
+
+  recordAutomationRunStarted(automationId, run) {
+    const automation = this.getAutomation(automationId);
+    if (!automation) {
+      return null;
+    }
+
+    const runHistory = [
+      {
+        runId: run.runId,
+        status: "running",
+        startedAt: run.startedAt,
+        startedAtDisplay: formatAutomationTimestamp(run.startedAt),
+        completedAt: null,
+        completedAtDisplay: "",
+        turnId: run.turnId || null,
+        threadId: run.threadId || null,
+        error: "",
+        report: "",
+      },
+      ...(Array.isArray(automation.runHistory) ? automation.runHistory : []),
+    ].slice(0, 20);
+
+    return this.patchAutomation(automationId, {
+      activeRunId: run.runId,
+      runHistory,
+      lastRunReport: {
+        runId: run.runId,
+        status: "running",
+        startedAt: run.startedAt,
+        startedAtDisplay: formatAutomationTimestamp(run.startedAt),
+        completedAt: null,
+        completedAtDisplay: "",
+        error: "",
+        report: "",
+      },
+    });
+  }
+
+  recordAutomationRunFinished(automationId, patch) {
+    const automation = this.getAutomation(automationId);
+    if (!automation) {
+      return null;
+    }
+
+    const runId = patch.runId || automation.activeRunId || `run:${Date.now()}`;
+    const completedAt = patch.completedAt || nowIso();
+    let didUpdateRun = false;
+    const runHistory = (Array.isArray(automation.runHistory) ? automation.runHistory : []).map((run) => {
+      if (run.runId !== runId) {
+        return run;
+      }
+      didUpdateRun = true;
+      return {
+        ...run,
+        status: patch.status,
+        completedAt,
+        completedAtDisplay: formatAutomationTimestamp(completedAt),
+        error: patch.error || "",
+        report: patch.report || "",
+      };
+    });
+
+    if (!didUpdateRun) {
+      runHistory.unshift({
+        runId,
+        status: patch.status,
+        startedAt: patch.startedAt || null,
+        startedAtDisplay: formatAutomationTimestamp(patch.startedAt),
+        completedAt,
+        completedAtDisplay: formatAutomationTimestamp(completedAt),
+        turnId: patch.turnId || automation.currentTurnId || null,
+        threadId: patch.threadId || automation.threadId || null,
+        error: patch.error || "",
+        report: patch.report || "",
+      });
+    }
+
+    return this.patchAutomation(automationId, {
+      activeRunId: null,
+      runHistory: runHistory.slice(0, 20),
+      lastRunReport: {
+        runId,
+        status: patch.status,
+        startedAt: patch.startedAt || null,
+        startedAtDisplay: formatAutomationTimestamp(patch.startedAt),
+        completedAt,
+        completedAtDisplay: formatAutomationTimestamp(completedAt),
+        error: patch.error || "",
+        report: patch.report || "",
+      },
+    });
   }
 
   listChannelBindingsForTask(taskId) {
@@ -1154,6 +1562,8 @@ class OpenAgentDaemon {
     });
     this.lastRuntimeError = "";
     this.isShuttingDown = false;
+    this.automationSchedulerTimer = null;
+    this.automationRunInFlight = new Set();
   }
 
   ensureConfig() {
@@ -1177,6 +1587,9 @@ class OpenAgentDaemon {
       },
       runtime: runtimeCheck,
       lastRuntimeError: this.lastRuntimeError,
+      automations: {
+        count: this.store.getAutomations().length,
+      },
     };
   }
 
@@ -1251,7 +1664,13 @@ class OpenAgentDaemon {
     }
 
     const task = this.store.findTaskByThreadId(params?.threadId);
-    if (!task) {
+    const automation = task ? null : this.store.findAutomationByThreadId(params?.threadId);
+    if (!task && !automation) {
+      return;
+    }
+
+    if (automation) {
+      this.handleAutomationRuntimeNotification(automation, method, params);
       return;
     }
 
@@ -1294,6 +1713,63 @@ class OpenAgentDaemon {
           delta: params?.delta || params?.outputDelta || params?.output || "",
         });
         this.publishTask(nextTask);
+        return;
+      }
+
+      default:
+        return;
+    }
+  }
+
+  handleAutomationRuntimeNotification(automation, method, params) {
+    switch (method) {
+      case "turn/started": {
+        this.store.patchAutomation(automation.automationId, {
+          currentTurnId: params?.turn?.id || null,
+          status: "running",
+          lastError: "",
+        });
+        return;
+      }
+
+      case "turn/completed": {
+        const completedAt = nowIso();
+        this.store.patchAutomation(automation.automationId, {
+          currentTurnId: null,
+          status: "idle",
+          lastError: "",
+          lastRunAt: completedAt,
+          nextRunAt: computeNextAutomationRunAt(automation.schedule, new Date(completedAt)),
+        });
+        const latestAutomation = this.store.getAutomation(automation.automationId);
+        this.store.recordAutomationRunFinished(automation.automationId, {
+          runId: latestAutomation?.activeRunId,
+          status: "completed",
+          completedAt,
+          turnId: automation.currentTurnId,
+          threadId: automation.threadId,
+          report: latestAutomationAssistantText(latestAutomation),
+        });
+        this.automationRunInFlight.delete(automation.automationId);
+        return;
+      }
+
+      case "item/agentMessage/delta": {
+        this.store.appendAutomationDelta(automation.automationId, "assistant", params);
+        return;
+      }
+
+      case "item/toolCall/outputDelta":
+      case "item/toolCall/output_delta":
+      case "item/tool_call/outputDelta":
+      case "item/tool_call/output_delta":
+      case "item/commandExecution/outputDelta":
+      case "item/command_execution/outputDelta":
+      case "item/fileChange/outputDelta": {
+        this.store.appendAutomationDelta(automation.automationId, "tool", {
+          ...params,
+          delta: params?.delta || params?.outputDelta || params?.output || "",
+        });
         return;
       }
 
@@ -1778,6 +2254,152 @@ class OpenAgentDaemon {
     return nextTask;
   }
 
+  automationPayload(automation, options = {}) {
+    if (!automation) {
+      return null;
+    }
+
+    const includeMessages = options.includeMessages !== false;
+    return {
+      ...automation,
+      nextRunAtDisplay: formatAutomationTimestamp(automation.nextRunAt),
+      lastRunAtDisplay: formatAutomationTimestamp(automation.lastRunAt),
+      lastAssistantReport: latestAutomationAssistantText(automation),
+      messages: includeMessages ? (Array.isArray(automation.messages) ? automation.messages : []) : [],
+      messagesIncluded: includeMessages,
+      runtimeConfig: normalizeRuntimeConfig(automation.runtimeConfig),
+    };
+  }
+
+  syncAutomations(body = {}) {
+    const synced = this.store.syncAutomations(body.automations || [], {
+      source: body.source || "vault",
+      pruneMissing: body.pruneMissing !== false,
+    });
+    return synced;
+  }
+
+  async runAutomation(automationId, options = {}) {
+    const automation = this.store.getAutomation(automationId);
+    if (!automation) {
+      throw new Error("Automation not found.");
+    }
+    if (!automation.enabled && options.force !== true) {
+      throw new Error("Automation is disabled.");
+    }
+    if (automation.status === "running" || automation.status === "starting" || this.automationRunInFlight.has(automation.automationId)) {
+      return automation;
+    }
+    if (!String(automation.cwd || "").trim()) {
+      throw new Error("Automation requires a working directory.");
+    }
+    if (!String(automation.prompt || "").trim()) {
+      throw new Error("Automation prompt is empty.");
+    }
+
+    const normalizedCwd = normalizeWorkingDirectory(automation.cwd);
+    const runtimeConfig = normalizeRuntimeConfig(automation.runtimeConfig);
+    this.automationRunInFlight.add(automation.automationId);
+
+    let nextAutomation = this.store.patchAutomation(automation.automationId, {
+      cwd: normalizedCwd,
+      status: "starting",
+      lastError: "",
+      runtimeConfig,
+    });
+
+    try {
+      await this.ensureRuntimeReady();
+      const runnable = {
+        taskId: automation.automationId,
+        cwd: normalizedCwd,
+        threadId: automation.threadStrategy === "resume" ? automation.threadId : null,
+      };
+      const thread = await this.client.createOrResumeThread(runnable, runtimeConfig);
+      nextAutomation = this.store.patchAutomation(automation.automationId, {
+        threadId: thread?.id || nextAutomation.threadId,
+        status: "idle",
+      });
+      const turn = await this.client.sendTurn({
+        taskId: automation.automationId,
+        cwd: normalizedCwd,
+        threadId: nextAutomation.threadId,
+      }, [
+        {
+          type: "text",
+          text: automation.prompt,
+          text_elements: [],
+        },
+      ], runtimeConfig);
+      const startedAt = nowIso();
+      const runId = `run:${automation.automationId}:${Date.now()}`;
+      this.store.recordAutomationRunStarted(automation.automationId, {
+        runId,
+        startedAt,
+        threadId: nextAutomation.threadId,
+        turnId: turn?.id || null,
+      });
+      nextAutomation = this.store.patchAutomation(automation.automationId, {
+        currentTurnId: turn?.id || null,
+        status: "running",
+      });
+      return nextAutomation;
+    } catch (error) {
+      this.automationRunInFlight.delete(automation.automationId);
+      const completedAt = nowIso();
+      const errorMessage = String(error?.message || error);
+      this.store.recordAutomationRunFinished(automation.automationId, {
+        status: "failed",
+        completedAt,
+        error: errorMessage,
+      });
+      nextAutomation = this.store.patchAutomation(automation.automationId, {
+        currentTurnId: null,
+        status: "error",
+        lastError: errorMessage,
+        nextRunAt: computeNextAutomationRunAt(automation.schedule),
+      });
+      throw error;
+    }
+  }
+
+  async runDueAutomations() {
+    const dueAutomations = this.store.listDueAutomations();
+    for (const automation of dueAutomations) {
+      void this.runAutomation(automation.automationId).catch((error) => {
+        const errorMessage = String(error?.message || error);
+        this.store.patchAutomation(automation.automationId, {
+          currentTurnId: null,
+          status: "error",
+          lastError: errorMessage,
+          nextRunAt: computeNextAutomationRunAt(automation.schedule),
+        });
+      });
+    }
+  }
+
+  startAutomationScheduler() {
+    if (this.automationSchedulerTimer) {
+      return;
+    }
+
+    this.automationSchedulerTimer = setInterval(() => {
+      void this.runDueAutomations();
+    }, AUTOMATION_SCHEDULER_INTERVAL_MS);
+    if (typeof this.automationSchedulerTimer?.unref === "function") {
+      this.automationSchedulerTimer.unref();
+    }
+    void this.runDueAutomations();
+  }
+
+  stopAutomationScheduler() {
+    if (!this.automationSchedulerTimer) {
+      return;
+    }
+    clearInterval(this.automationSchedulerTimer);
+    this.automationSchedulerTimer = null;
+  }
+
   bindXmtpConversation(conversationId, body) {
     const taskId = String(body.taskId || "").trim();
     const task = this.store.getTask(taskId);
@@ -1933,6 +2555,41 @@ class OpenAgentDaemon {
         sendJson(response, 200, {
           tasks: this.store.getTasks().map((task) => this.taskPayload(task, { includeMessages: false })),
         });
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/automations") {
+        sendJson(response, 200, {
+          automations: this.store.getAutomations().map((automation) => this.automationPayload(automation, { includeMessages: false })),
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && pathname === "/automations/sync") {
+        const body = await readRequestBody(request);
+        const synced = this.syncAutomations(body);
+        sendJson(response, 200, {
+          automations: synced.map((automation) => this.automationPayload(automation, { includeMessages: false })),
+        });
+        return;
+      }
+
+      if (request.method === "POST" && /^\/automations\/[^/]+\/run$/.test(pathname)) {
+        const body = await readRequestBody(request);
+        const automation = await this.runAutomation(parseAutomationId(pathname), {
+          force: body.force === true,
+        });
+        sendJson(response, 200, { automation: this.automationPayload(automation) });
+        return;
+      }
+
+      if (request.method === "GET" && /^\/automations\/[^/]+$/.test(pathname)) {
+        const automation = this.store.getAutomation(parseAutomationId(pathname));
+        if (!automation) {
+          sendError(response, 404, "Automation not found.");
+          return;
+        }
+        sendJson(response, 200, { automation: this.automationPayload(automation) });
         return;
       }
 
@@ -2108,6 +2765,7 @@ class OpenAgentDaemon {
       }
 
       this.isShuttingDown = true;
+      this.stopAutomationScheduler();
       this.client.stop();
       this.store.save();
     };
@@ -2130,6 +2788,7 @@ class OpenAgentDaemon {
     server.listen(this.config.port, this.config.host, () => {
       console.log(`[openagent] daemon listening on http://${this.config.host}:${this.config.port}`);
       console.log(`[openagent] config file: ${CONFIG_PATH}`);
+      this.startAutomationScheduler();
     });
 
     return server;
