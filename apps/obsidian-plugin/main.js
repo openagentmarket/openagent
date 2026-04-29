@@ -879,6 +879,10 @@ function createCanvasObjectId(prefix = "oa-canvas") {
   return `${normalizedPrefix}-${stableShortHash(`${Date.now()}\0${Math.random().toString(16)}`)}`;
 }
 
+function createVaultId() {
+  return createCanvasObjectId("oa-vault");
+}
+
 function buildTaskResultNodeId(taskId, sourceNodeId) {
   return `oa-result-${stableShortHash(`${String(taskId || "").trim()}\0${String(sourceNodeId || "").trim()}`)}`;
 }
@@ -1799,8 +1803,10 @@ class OpenAgentApiClient {
     return this.requestOnce("GET", "/health");
   }
 
-  getTasks() {
-    return this.request("GET", "/tasks");
+  getTasks(options = {}) {
+    const vaultId = String(options.vaultId || "").trim();
+    const query = vaultId ? `?vaultId=${encodeURIComponent(vaultId)}` : "";
+    return this.request("GET", `/tasks${query}`);
   }
 
   getAutomations() {
@@ -5779,6 +5785,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   async onload() {
     const savedState = (await this.loadData()) || {};
+    const savedVaultId = String(savedState.vaultId || savedState.uiState?.vaultId || "").trim();
+    const didCreateVaultId = !savedVaultId;
+    this.vaultId = savedVaultId || createVaultId();
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...(savedState.settings || {}),
@@ -6066,6 +6075,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
     void this.ensurePluginLogoDataUrlLoaded();
     void this.refreshDaemonStatus();
     void this.refreshTasks().catch(() => {});
+    if (didCreateVaultId) {
+      void this.persistPluginState();
+    }
   }
 
   async onunload() {
@@ -6089,6 +6101,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   async persistPluginState() {
     await this.saveData({
+      vaultId: this.vaultId,
       settings: this.settings,
       uiState: this.uiState,
       syncState: {
@@ -6368,13 +6381,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
     const cwd = materialized.cwd;
 
     await this.activateView();
-    const response = await this.api.createTaskFromCanvasSelection({
+    const response = await this.api.createTaskFromCanvasSelection(this.withVaultScope({
       ...selectionContext,
       cwd,
       forceNewTask: true,
       runtimeConfig: this.buildRuntimeConfigPayload(),
-    });
-    const task = this.mergeTask(response.task);
+    }));
+    const task = this.mergeTask(response.task, { adoptCurrentVault: true });
     this.runtimeIssue = "";
     await this.setActiveTask(task.taskId, { revealInActiveTab: true });
 
@@ -6442,7 +6455,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     return {
       cwd: workspace?.repoPath || cwd,
-      selectionContext: {
+      selectionContext: this.withVaultScope({
         canvasPath,
         canvasName: basenameVaultPath(canvasPath).replace(/\.canvas$/i, ""),
         nodeIds: [node.id],
@@ -6456,7 +6469,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         imageFiles: [],
         warnings: [],
         title: displayText.slice(0, 80) || title,
-      },
+      }),
     };
   }
 
@@ -7120,6 +7133,56 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   getVaultBasePath() {
     return this.resolver?.getVaultBasePath?.() || "";
+  }
+
+  getVaultScope() {
+    const vaultId = String(this.vaultId || "").trim();
+    const vaultBasePath = this.getVaultBasePath();
+    return {
+      scopeType: "obsidian-vault",
+      vaultId,
+      vaultName: String(this.app.vault?.getName?.() || "").trim(),
+      vaultPathHash: vaultBasePath ? stableShortHash(path.resolve(vaultBasePath)) : "",
+    };
+  }
+
+  withVaultScope(payload = {}) {
+    const vaultScope = this.getVaultScope();
+    return {
+      ...payload,
+      vaultScope,
+      vaultId: vaultScope.vaultId,
+      vaultName: vaultScope.vaultName,
+      vaultPathHash: vaultScope.vaultPathHash,
+    };
+  }
+
+  isTaskForCurrentVault(task) {
+    const currentVaultId = String(this.vaultId || "").trim();
+    if (!currentVaultId) {
+      return false;
+    }
+
+    return this.getTaskVaultId(task) === currentVaultId;
+  }
+
+  getTaskVaultId(task) {
+    return String(task?.vaultScope?.vaultId || task?.selectionContext?.vaultId || "").trim();
+  }
+
+  scopeTaskForCurrentVault(task) {
+    if (!task) {
+      return null;
+    }
+
+    const scopedSelectionContext = task.selectionContext
+      ? this.withVaultScope(task.selectionContext)
+      : task.selectionContext;
+    const scopedTask = this.withVaultScope({
+      ...task,
+      selectionContext: scopedSelectionContext,
+    });
+    return scopedTask;
   }
 
   getVaultPathForAbsolutePath(absolutePath) {
@@ -7867,30 +7930,32 @@ module.exports = class OpenAgentPlugin extends Plugin {
           selection = await this.resolver.addImplicitCanvasFileContext(selection);
         }
 
-        const response = await this.api.createTaskFromCanvasSelection({
+        const response = await this.api.createTaskFromCanvasSelection(this.withVaultScope({
           ...selection,
           cwd: requestedCwd || this.resolver.inferWorkingDirectory(selection),
           forceNewTask: request?.forceNewTask === true,
           runtimeConfig: this.buildRuntimeConfigPayload(),
-        });
-        task = this.mergeTask(response.task);
+        }));
+        task = this.mergeTask(response.task, { adoptCurrentVault: true });
 
         if (request?.runTask !== false) {
           if (smokeMode === "new-thread") {
             rawPrompt = this.getNewThreadPromptFromSelection(selection, {
               cwd: requestedCwd || this.resolver.inferWorkingDirectory(selection),
             });
-            await this.api.runTask(task.taskId, {
+            const runResponse = await this.api.runTask(task.taskId, {
               rawPrompt,
               transcriptMessage: rawPrompt,
               forceContext: false,
               runtimeConfig: this.buildRuntimeConfigPayload(),
             });
+            this.mergeTask(runResponse.task, { adoptCurrentVault: true });
           } else {
-            await this.api.runTask(task.taskId, {
+            const runResponse = await this.api.runTask(task.taskId, {
               forceContext: true,
               runtimeConfig: this.buildRuntimeConfigPayload(),
             });
+            this.mergeTask(runResponse.task, { adoptCurrentVault: true });
           }
         }
       }
@@ -8040,7 +8105,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
   }
 
   getTasks() {
-    return Object.values(this.tasksById).sort((left, right) => {
+    return Object.values(this.tasksById).filter((task) => this.isTaskForCurrentVault(task)).sort((left, right) => {
       return (right.updatedAt || "").localeCompare(left.updatedAt || "");
     });
   }
@@ -8348,7 +8413,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         const metadataTaskId = getOpenAgentResultTaskId(upstreamNode);
         if (metadataTaskId) {
           try {
-            await this.refreshTask(metadataTaskId, { force: true });
+            await this.refreshTask(metadataTaskId, { force: true, adoptCurrentVault: true });
             task = this.findConversationTaskForUpstreamNode(canvasPath, upstreamNodeId);
           } catch {
             task = null;
@@ -8491,7 +8556,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
           rawPrompt,
           transcriptMessage: followUpTarget.message,
           forceContext: false,
-          selectionContext: selection,
+          selectionContext: this.withVaultScope(selection),
           runtimeConfig,
         })
       : await this.api.sendMessage(
@@ -8501,7 +8566,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
         );
 
     return {
-      task: this.mergeTask(response.task),
+      task: this.mergeTask(response.task, { adoptCurrentVault: true }),
       message: followUpTarget.message,
     };
   }
@@ -8514,8 +8579,8 @@ module.exports = class OpenAgentPlugin extends Plugin {
     const rawPrompt = (markdownFiles.length > 0 || imageFiles.length > 0)
       ? buildCanvasSelectionPrompt(selection, followUpTarget.message, { cwd: task.cwd })
       : followUpTarget.message;
-    const response = await this.api.forkTask(task.taskId, {
-      selectionContext: selection,
+    const response = await this.api.forkTask(task.taskId, this.withVaultScope({
+      selectionContext: this.withVaultScope(selection),
       cwd: task.cwd || this.resolver.inferWorkingDirectory(selection),
       rawPrompt,
       transcriptMessage: followUpTarget.message,
@@ -8524,10 +8589,10 @@ module.exports = class OpenAgentPlugin extends Plugin {
       branchMessageId: forkTarget.branchMessageId,
       rollbackTurns: forkTarget.rollbackTurns,
       runtimeConfig,
-    });
+    }));
 
     return {
-      task: this.mergeTask(response.task),
+      task: this.mergeTask(response.task, { adoptCurrentVault: true }),
       message: followUpTarget.message,
       mode: "fork",
     };
@@ -8624,6 +8689,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
       if (options.fork === true && !isOpenAgentAssistantResultNode(selectedNode)) {
         throw new Error("Select an OpenAgent result node before creating a fork.");
       }
+      if (isOpenAgentAssistantResultNode(selectedNode)) {
+        await this.ensureTaskForOpenAgentResultNode(file.path, selectedNode);
+      }
 
       const anchor = this.resolveFollowUpAnchorForSelectedNode(file.path, selectedNodeId, nodeById);
       const isForkNode = options.fork === true;
@@ -8670,6 +8738,25 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.scheduleCanvasNodeHighlightSync(file.path);
     this.requestViewRefresh({ force: true });
     return result;
+  }
+
+  async ensureTaskForOpenAgentResultNode(canvasPath, resultNode) {
+    const normalizedCanvasPath = String(canvasPath || "").trim();
+    const taskId = getOpenAgentResultTaskId(resultNode);
+    if (!normalizedCanvasPath || !taskId) {
+      return null;
+    }
+
+    const cachedTask = this.tasksById[taskId] || null;
+    if (cachedTask && this.getTaskCanvasPath(cachedTask) === normalizedCanvasPath) {
+      return cachedTask;
+    }
+
+    await this.refreshTask(taskId, { force: true, adoptCurrentVault: true });
+    const refreshedTask = this.tasksById[taskId] || null;
+    return refreshedTask && this.getTaskCanvasPath(refreshedTask) === normalizedCanvasPath
+      ? refreshedTask
+      : null;
   }
 
   resolveFollowUpAnchorForSelectedNode(canvasPath, selectedNodeId, nodeById) {
@@ -8956,6 +9043,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   getActiveTask() {
     const task = this.tasksById[this.uiState.activeTaskId] || null;
+    if (!this.isTaskForCurrentVault(task)) {
+      return null;
+    }
     const activeCanvasPath = this.getActiveCanvasPath();
     if (!activeCanvasPath) {
       return task;
@@ -9272,13 +9362,19 @@ module.exports = class OpenAgentPlugin extends Plugin {
     });
   }
 
-  mergeTask(task) {
+  mergeTask(task, options = {}) {
     if (!task) {
       return null;
     }
 
     const previousTask = this.tasksById[task.taskId] || null;
-    const nextTask = this.normalizeTaskForStore(task, previousTask);
+    const inputTask = options.adoptCurrentVault === true && !this.getTaskVaultId(task)
+      ? this.scopeTaskForCurrentVault(task)
+      : task;
+    const nextTask = this.normalizeTaskForStore(inputTask, previousTask);
+    if (!nextTask) {
+      return null;
+    }
     this.tasksById[nextTask.taskId] = nextTask;
     const didMarkUnread = this.shouldMarkTaskUnread(previousTask, nextTask)
       && this.updateTaskUnreadState(nextTask.taskId, true);
@@ -9300,9 +9396,15 @@ module.exports = class OpenAgentPlugin extends Plugin {
     if (!task?.taskId) {
       return null;
     }
+    const scopedTask = !this.getTaskVaultId(task) && this.isTaskForCurrentVault(previousTask)
+      ? this.scopeTaskForCurrentVault(task)
+      : task;
+    if (!this.isTaskForCurrentVault(scopedTask)) {
+      return null;
+    }
 
     const nextTask = {
-      ...task,
+      ...scopedTask,
     };
     const shouldReuseDetailedMessages = (
       nextTask.messagesIncluded === false
@@ -10278,10 +10380,11 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   async refreshTasks() {
     try {
-      const response = await this.api.getTasks();
+      const response = await this.api.getTasks({ vaultId: this.vaultId });
       this.runtimeIssue = "";
       const previousTasksById = this.tasksById;
       const nextTasksById = {};
+      const liveTasksById = this.tasksById;
 
       for (const rawTask of response.tasks || []) {
         const taskId = String(rawTask?.taskId || "").trim();
@@ -10289,13 +10392,24 @@ module.exports = class OpenAgentPlugin extends Plugin {
           continue;
         }
 
-        const nextTask = this.normalizeTaskForStore(rawTask, previousTasksById[taskId] || null);
+        const nextTask = this.normalizeTaskForStore(
+          rawTask,
+          previousTasksById[taskId] || liveTasksById[taskId] || null
+        );
         if (!nextTask) {
           continue;
         }
 
         nextTasksById[taskId] = nextTask;
       }
+
+      Object.values(liveTasksById).forEach((task) => {
+        const taskId = String(task?.taskId || "").trim();
+        if (!taskId || nextTasksById[taskId] || !this.isTaskForCurrentVault(task)) {
+          return;
+        }
+        nextTasksById[taskId] = task;
+      });
 
       this.tasksById = nextTasksById;
       this.pruneUnreadTaskState();
@@ -10327,7 +10441,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     try {
       const response = await this.api.getTask(taskId);
-      this.mergeTask(response.task);
+      this.mergeTask(response.task, {
+        adoptCurrentVault: options.adoptCurrentVault === true,
+      });
       this.requestViewRefresh(options);
     } catch (error) {
       this.runtimeIssue = String(error?.message || error);
@@ -10683,13 +10799,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
       await this.activateView();
 
       const rawPrompt = this.getNewThreadPromptFromSelection(effectiveSelection, { cwd: inferredCwd });
-      const response = await this.api.createTaskFromCanvasSelection({
+      const response = await this.api.createTaskFromCanvasSelection(this.withVaultScope({
         ...effectiveSelection,
         cwd: inferredCwd,
         forceNewTask: options.forceNewTask === true,
         runtimeConfig: this.buildRuntimeConfigPayload(),
-      });
-      const task = this.mergeTask(response.task);
+      }));
+      const task = this.mergeTask(response.task, { adoptCurrentVault: true });
       await this.appendDebugEvent("task_created", {
         taskId: task.taskId,
         threadId: task.threadId || "",
@@ -10714,12 +10830,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
           : "OpenAgent is ready for this selection."
       );
 
-      await this.api.runTask(task.taskId, {
+      const runResponse = await this.api.runTask(task.taskId, {
         rawPrompt,
         transcriptMessage: rawPrompt,
         forceContext: false,
         runtimeConfig: this.buildRuntimeConfigPayload(),
       });
+      this.mergeTask(runResponse.task, { adoptCurrentVault: true });
       await this.appendDebugEvent("run_requested", {
         taskId: task.taskId,
         rawPrompt,
@@ -11679,13 +11796,13 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     try {
-      const response = await this.api.createTaskFromCanvasSelection({
+      const response = await this.api.createTaskFromCanvasSelection(this.withVaultScope({
         ...task.selectionContext,
         title: task.title,
         cwd: normalizedCwd,
         runtimeConfig: this.buildRuntimeConfigPayload(),
-      });
-      const nextTask = this.mergeTask(response.task);
+      }));
+      const nextTask = this.mergeTask(response.task, { adoptCurrentVault: true });
       await this.setActiveTask(nextTask.taskId, { revealInActiveTab: true });
       this.runtimeIssue = "";
       new Notice(`Project folder set to ${nextTask.cwd || "(not set)"}`);

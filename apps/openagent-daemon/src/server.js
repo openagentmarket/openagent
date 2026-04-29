@@ -20,6 +20,7 @@ const {
   createTaskId,
   normalizeCanvasBinding,
   normalizeCanvasSelection,
+  normalizeVaultScope,
   nowIso,
   stableHash,
 } = require("../../../packages/core/src/index.js");
@@ -966,6 +967,17 @@ class TaskStore {
     });
   }
 
+  getTasksForVault(vaultId) {
+    const normalizedVaultId = String(vaultId || "").trim();
+    if (!normalizedVaultId) {
+      return this.getTasks();
+    }
+
+    return this.getTasks().filter((task) => {
+      return String(task?.vaultScope?.vaultId || task?.selectionContext?.vaultId || "").trim() === normalizedVaultId;
+    });
+  }
+
   getTask(taskId) {
     return taskId && this.state.tasks[taskId] ? createTaskBinding(this.state.tasks[taskId]) : null;
   }
@@ -1901,6 +1913,7 @@ class OpenAgentDaemon {
 
   createOrReuseTaskFromCanvasSelection(body) {
     const selectionContext = normalizeCanvasSelection(body);
+    const vaultScope = normalizeVaultScope(body.vaultScope || selectionContext);
     const runtimeConfig = normalizeRuntimeConfig(body.runtimeConfig);
     if (!selectionContext.canvasPath || selectionContext.nodeIds.length === 0) {
       throw new Error("A canvasPath and at least one selected node are required.");
@@ -1928,6 +1941,7 @@ class OpenAgentDaemon {
         lastError: "",
         messages: [],
         runtimeConfig,
+        vaultScope,
         canvasBinding: this.buildCanvasBinding(selectionContext),
       }));
     }
@@ -1941,6 +1955,7 @@ class OpenAgentDaemon {
           sourceRef: selectionContext.canvasPath,
           selectionContext,
           runtimeConfig,
+          vaultScope,
           lastError: existing.lastError || "",
           canvasBinding: this.buildCanvasBinding(selectionContext, existing.canvasBinding),
         });
@@ -1956,6 +1971,7 @@ class OpenAgentDaemon {
         title: selectionContext.title,
         selectionContext,
         runtimeConfig,
+        vaultScope,
         canvasBinding: this.buildCanvasBinding(selectionContext),
       }));
     }
@@ -1970,6 +1986,7 @@ class OpenAgentDaemon {
         cwd: normalizedCwd,
         selectionContext,
         runtimeConfig,
+        vaultScope,
         status: existing.threadId ? existing.status : "idle",
         canvasBinding: this.buildCanvasBinding(selectionContext, existing.canvasBinding),
       });
@@ -1985,6 +2002,7 @@ class OpenAgentDaemon {
       title: selectionContext.title,
       selectionContext,
       runtimeConfig,
+      vaultScope,
       canvasBinding: this.buildCanvasBinding(selectionContext),
     });
 
@@ -1999,6 +2017,7 @@ class OpenAgentDaemon {
       messages: [],
       runtimeConfig,
       selectionContext,
+      vaultScope,
       canvasBinding: this.buildCanvasBinding(selectionContext, baseTask.canvasBinding),
     });
 
@@ -2072,6 +2091,7 @@ class OpenAgentDaemon {
     }
 
     const selectionContext = normalizeCanvasSelection(body.selectionContext || body);
+    const vaultScope = normalizeVaultScope(body.vaultScope || selectionContext.vaultScope || sourceTask.vaultScope || selectionContext);
     if (!selectionContext.canvasPath || selectionContext.nodeIds.length === 0) {
       throw new Error("A canvasPath and at least one selected node are required.");
     }
@@ -2101,6 +2121,7 @@ class OpenAgentDaemon {
       lastError: "",
       messages: forkedMessages,
       runtimeConfig,
+      vaultScope,
       canvasBinding: this.buildCanvasBinding(selectionContext, sourceTask.canvasBinding, {
         canvasPath: selectionContext.canvasPath,
         rootNodeIds: branchRootNodeId ? [branchRootNodeId] : selectionContext.nodeIds,
@@ -2552,8 +2573,9 @@ class OpenAgentDaemon {
       }
 
       if (request.method === "GET" && pathname === "/tasks") {
+        const vaultId = String(url.searchParams.get("vaultId") || "").trim();
         sendJson(response, 200, {
-          tasks: this.store.getTasks().map((task) => this.taskPayload(task, { includeMessages: false })),
+          tasks: this.store.getTasksForVault(vaultId).map((task) => this.taskPayload(task, { includeMessages: false })),
         });
         return;
       }

@@ -27,6 +27,21 @@ function normalizeStringArray(value) {
   return Array.isArray(value) ? value.map((entry) => String(entry)).filter(Boolean) : [];
 }
 
+function normalizeVaultScope(input = {}) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const vaultId = String(source.vaultId || "").trim();
+  if (!vaultId) {
+    return null;
+  }
+
+  return {
+    scopeType: String(source.scopeType || "obsidian-vault").trim() || "obsidian-vault",
+    vaultId,
+    vaultName: String(source.vaultName || "").trim(),
+    vaultPathHash: String(source.vaultPathHash || "").trim(),
+  };
+}
+
 function normalizeCanvasSelection(input = {}) {
   const textBlocks = Array.isArray(input.textBlocks)
     ? input.textBlocks
@@ -68,8 +83,9 @@ function normalizeCanvasSelection(input = {}) {
   const nodeIds = normalizeStringArray(input.nodeIds).sort();
   const canvasPath = String(input.canvasPath || "").trim();
   const title = String(input.title || "").trim() || deriveTitle(canvasPath, textBlocks, markdownFiles, imageFiles);
+  const vaultScope = normalizeVaultScope(input.vaultScope || input);
 
-  return {
+  const selection = {
     canvasPath,
     canvasName: String(input.canvasName || "").trim(),
     nodeIds,
@@ -79,6 +95,13 @@ function normalizeCanvasSelection(input = {}) {
     warnings,
     title,
   };
+  if (vaultScope) {
+    selection.vaultScope = vaultScope;
+    selection.vaultId = vaultScope.vaultId;
+    selection.vaultName = vaultScope.vaultName;
+    selection.vaultPathHash = vaultScope.vaultPathHash;
+  }
+  return selection;
 }
 
 function normalizePromptPath(value) {
@@ -187,6 +210,7 @@ function deriveTitle(canvasPath, textBlocks, markdownFiles, imageFiles = []) {
 function createSelectionKey(selectionContext) {
   const selection = normalizeCanvasSelection(selectionContext);
   return stableHash([
+    selection.vaultId || "",
     selection.canvasPath,
     selection.nodeIds.join("\n"),
   ].join("\n\n"));
@@ -273,11 +297,13 @@ function createTaskBinding({
   messages = [],
   runtimeConfig = DEFAULT_RUNTIME_CONFIG,
   canvasBinding = {},
+  vaultScope = null,
   createdAt = nowIso(),
   updatedAt = createdAt,
 }) {
   const normalizedSelection = normalizeCanvasSelection(selectionContext);
   const selectionKey = createSelectionKey(normalizedSelection);
+  const normalizedVaultScope = normalizeVaultScope(vaultScope || normalizedSelection.vaultScope || normalizedSelection);
   const normalizedRuntimeConfig = {
     approvalPolicy: String(runtimeConfig?.approvalPolicy || DEFAULT_RUNTIME_CONFIG.approvalPolicy),
     sandboxMode: SUPPORTED_SANDBOX_MODES.has(String(runtimeConfig?.sandboxMode || ""))
@@ -300,6 +326,7 @@ function createTaskBinding({
     runtimeConfig: normalizedRuntimeConfig,
     selectionContext: normalizedSelection,
     canvasBinding: normalizeCanvasBinding(canvasBinding, normalizedSelection),
+    ...(normalizedVaultScope ? { vaultScope: normalizedVaultScope } : {}),
     createdAt,
     updatedAt,
   };
@@ -398,6 +425,7 @@ module.exports = {
   deriveTitle,
   normalizeCanvasBinding,
   normalizeCanvasSelection,
+  normalizeVaultScope,
   nowIso,
   stableHash,
 };

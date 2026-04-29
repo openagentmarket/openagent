@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { ensureSmokeVaultReady, openObsidianVault, resolveSmokeVaultPath } from "./obsidian-vault-utils.mjs";
@@ -38,7 +39,7 @@ assertTaskCanvasBinding(task, {
   rootNodeIds: [sourceNodeId],
 });
 waitForNodeColor(sourceNodeId, COMPLETED_CANVAS_NODE_COLOR, 45_000);
-assertHasResultNodeForSource(sourceNodeId);
+waitForResultNodeForSource(sourceNodeId, 45_000);
 const completedTask = await waitForTaskCompletion(result.taskId, 120_000);
 assertTaskCanvasBinding(completedTask, {
   canvasPath: canvasPathRelative,
@@ -184,6 +185,23 @@ function readNodeColor(nodeId) {
   return node && Object.prototype.hasOwnProperty.call(node, "color")
     ? String(node.color)
     : "";
+}
+
+function waitForResultNodeForSource(sourceId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      assertHasResultNodeForSource(sourceId);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+
+    sleep(500);
+  }
+
+  throw lastError || new Error(`Timed out waiting for a result node linked from ${sourceId}.`);
 }
 
 function assertHasResultNodeForSource(sourceId) {
