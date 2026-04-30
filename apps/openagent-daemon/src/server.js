@@ -33,6 +33,10 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4317;
 const TASK_STORE_SAVE_DEBOUNCE_MS = 75;
 const TASK_MESSAGE_PREVIEW_LENGTH = 280;
+const TASK_MESSAGE_TEXT_MAX_LENGTH = 8_000;
+const TASK_MESSAGE_HISTORY_LIMIT = 40;
+const TASK_STORE_TASK_LIMIT = 500;
+const SMOKE_TASK_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const AUTOMATION_SCHEDULER_INTERVAL_MS = 60_000;
 const AUTOMATION_MESSAGE_PREVIEW_LENGTH = 8_000;
 const REALTIME_SDP_WAIT_MS = 12_000;
@@ -203,6 +207,16 @@ function compactMessageText(value, maxLength = 0) {
 
   const suffix = "...";
   return `${compact.slice(0, Math.max(0, maxLength - suffix.length)).trimEnd()}${suffix}`;
+}
+
+function truncateMessageText(value, maxLength = TASK_MESSAGE_TEXT_MAX_LENGTH) {
+  const text = String(value || "");
+  if (!maxLength || text.length <= maxLength) {
+    return text;
+  }
+
+  const suffix = "\n\n[OpenAgent truncated this stored preview. Full runtime history remains in Codex session logs.]";
+  return `${text.slice(0, Math.max(0, maxLength - suffix.length)).trimEnd()}${suffix}`;
 }
 
 function normalizeRuntimeErrorMessage(value) {
@@ -889,6 +903,7 @@ class TaskStore {
     this.automationIdByThreadId = new Map();
     this.pendingSaveTimer = null;
     this.isDirty = false;
+    this.compactStoredTasks();
     this.rebuildIndexes();
   }
 
@@ -958,6 +973,56 @@ class TaskStore {
 
     if (nextThreadId && automationId) {
       this.automationIdByThreadId.set(nextThreadId, automationId);
+    }
+  }
+
+  compactStoredTasks() {
+    const nowTime = Date.now();
+    const tasks = Object.values(this.state.tasks)
+      .map((task) => createTaskBinding(task))
+      .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
+    const keptTaskIds = new Set();
+
+    tasks.forEach((task, index) => {
+      const updatedTime = Date.parse(task.updatedAt || task.createdAt || "");
+      const title = String(task.title || "");
+      const sourceRef = String(task.sourceRef || "");
+      const isSmokeTask = /smoke/i.test(title) || /smoke/i.test(sourceRef);
+      const isExpiredSmokeTask = isSmokeTask && Number.isFinite(updatedTime) && nowTime - updatedTime > SMOKE_TASK_RETENTION_MS;
+
+      if (isExpiredSmokeTask || index >= TASK_STORE_TASK_LIMIT) {
+        this.updateThreadIndex(null, task);
+        delete this.state.tasks[task.taskId];
+        this.isDirty = true;
+        return;
+      }
+
+      const messages = Array.isArray(task.messages) ? task.messages : [];
+      const compactedMessages = messages.slice(-TASK_MESSAGE_HISTORY_LIMIT).map((message) => ({
+        ...message,
+        text: truncateMessageText(message.text),
+      }));
+      keptTaskIds.add(task.taskId);
+
+      if (compactedMessages.length !== messages.length || compactedMessages.some((message, messageIndex) => message.text !== messages[messages.length - compactedMessages.length + messageIndex]?.text)) {
+        this.state.tasks[task.taskId] = {
+          ...task,
+          messages: compactedMessages,
+        };
+        this.isDirty = true;
+      }
+    });
+
+    Object.entries(this.state.channels).forEach(([key, channel]) => {
+      const taskId = String(channel?.taskId || "").trim();
+      if (taskId && !keptTaskIds.has(taskId)) {
+        delete this.state.channels[key];
+        this.isDirty = true;
+      }
+    });
+
+    if (this.isDirty) {
+      this.save();
     }
   }
 
@@ -1260,9 +1325,10 @@ class TaskStore {
     const messages = Array.isArray(task.messages) ? [...task.messages] : [];
     messages.push({
       ...message,
+      text: truncateMessageText(message.text),
       createdAt: message.createdAt || nowIso(),
     });
-    return this.patchTask(taskId, { messages });
+    return this.patchTask(taskId, { messages: messages.slice(-TASK_MESSAGE_HISTORY_LIMIT) });
   }
 
   appendDelta(taskId, kind, payload) {
@@ -1277,7 +1343,7 @@ class TaskStore {
     if (index >= 0) {
       messages[index] = {
         ...messages[index],
-        text: `${messages[index].text || ""}${payload.delta || ""}`,
+        text: truncateMessageText(`${messages[index].text || ""}${payload.delta || ""}`),
         updatedAt: nowIso(),
       };
     } else {
@@ -1288,12 +1354,12 @@ class TaskStore {
         kind,
         turnId: payload.turnId || null,
         itemId: payload.itemId || null,
-        text: payload.delta || "",
+        text: truncateMessageText(payload.delta || ""),
         createdAt: nowIso(),
       });
     }
 
-    return this.patchTask(taskId, { messages });
+    return this.patchTask(taskId, { messages: messages.slice(-TASK_MESSAGE_HISTORY_LIMIT) });
   }
 
   bindChannel(channelBinding) {
