@@ -4682,6 +4682,10 @@ class OpenAgentView extends ItemView {
       const itemMain = itemHeader.createDiv({ cls: "oa-thread-list-main" });
       itemMain.createDiv({ cls: "oa-task-title oa-thread-list-title", text: task.title || "Untitled task" });
       const metaParts = [];
+      const projectLabel = this.plugin.getTaskProjectLabel(task);
+      if (projectLabel) {
+        metaParts.push(projectLabel);
+      }
       const conversationTimestamp = this.plugin.getTaskConversationLastMessageTimestamp(task);
       const conversationTimeLabel = formatTaskListTimeLabel(conversationTimestamp);
       if (conversationTimeLabel) {
@@ -8283,6 +8287,23 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
   getTaskConversationLastMessageDayTimestamp(task) {
     return getStartOfLocalDayTimestamp(this.getTaskConversationLastMessageTimestamp(task));
+  }
+
+  getTaskProjectLabel(task) {
+    const canvasWorkspace = this.getWorkspaceForVaultPath(task?.selectionContext?.canvasPath);
+    if (canvasWorkspace?.name) {
+      return canvasWorkspace.name;
+    }
+
+    const cwd = normalizeRepoPath(task?.cwd);
+    if (!cwd) {
+      return "";
+    }
+
+    const cwdWorkspace = this.listWorkspaceSummaries().find((workspace) => {
+      return normalizeRepoPath(workspace?.repoPath) === cwd;
+    });
+    return cwdWorkspace?.name || compactPathLabel(cwd);
   }
 
   getTaskRootNodeRef(task) {
