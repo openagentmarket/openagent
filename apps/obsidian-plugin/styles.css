@@ -455,6 +455,52 @@
   gap: 12px;
 }
 
+.oa-panel-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.oa-panel-tab {
+  appearance: none;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--oa-border-soft);
+  border-radius: var(--oa-radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  text-align: center;
+  box-shadow: none;
+}
+
+.oa-panel-tab:hover {
+  color: var(--text-normal);
+  border-color: var(--oa-border);
+}
+
+.oa-panel-tab.is-active {
+  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--interactive-accent) 30%, var(--oa-border-soft));
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+}
+
+.openagent-view .oa-panel-tab,
+.openagent-view .oa-panel-tab:hover,
+.openagent-view .oa-panel-tab:focus,
+.openagent-view .oa-panel-tab:focus-visible,
+.openagent-view .oa-panel-tab:active,
+.openagent-view .oa-settings-inline-tab,
+.openagent-view .oa-settings-inline-tab:hover,
+.openagent-view .oa-settings-inline-tab:focus,
+.openagent-view .oa-settings-inline-tab:focus-visible,
+.openagent-view .oa-settings-inline-tab:active {
+  box-shadow: none !important;
+}
+
 .oa-task-list,
 .oa-message-list,
 .oa-workspace-list {
@@ -578,6 +624,7 @@
 }
 
 .oa-thread-list-arrow {
+  appearance: none;
   flex: 0 0 auto;
   color: var(--text-faint);
   width: 20px;
@@ -588,8 +635,25 @@
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+  cursor: pointer;
+  padding: 0;
+  box-shadow: none;
+  font: inherit;
   font-size: 0.8rem;
   line-height: 1;
+}
+
+.oa-thread-list-arrow:hover {
+  color: var(--text-normal);
+  border-color: var(--oa-border);
+}
+
+.openagent-view .oa-thread-list-arrow,
+.openagent-view .oa-thread-list-arrow:hover,
+.openagent-view .oa-thread-list-arrow:focus,
+.openagent-view .oa-thread-list-arrow:focus-visible,
+.openagent-view .oa-thread-list-arrow:active {
+  box-shadow: none !important;
 }
 
 .oa-thread-list-unread-dot {
@@ -1025,6 +1089,54 @@
   border-color: color-mix(in srgb, var(--interactive-accent) 28%, var(--oa-border-soft));
 }
 
+.oa-thread-filter-shell {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.oa-thread-filter-select {
+  appearance: none;
+  width: 18px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%) 4px 55% / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%) 9px 55% / 5px 5px no-repeat;
+  color: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 500;
+  line-height: 1.25;
+  box-shadow: none;
+}
+
+.oa-thread-filter-select:hover,
+.oa-thread-filter-select:focus,
+.oa-thread-filter-select:focus-visible {
+  color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.oa-thread-filter-select option {
+  color: var(--text-normal);
+}
+
+.oa-thread-filter-header {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.oa-thread-filter-header .oa-settings-section-title {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .oa-workspace-overview {
   padding: 12px;
   border: 1px solid var(--oa-border-soft);
@@ -1188,6 +1300,20 @@
 
 .oa-settings-task-section {
   padding-top: 2px;
+}
+
+.oa-header-actions .oa-icon-button.is-icon-only {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.oa-header-actions .oa-icon-button.is-icon-only svg {
+  width: 16px;
+  height: 16px;
 }
 
 .oa-composer-input-shell {

@@ -100,6 +100,8 @@ const SETTINGS_RECENT_TASKS_PAGE_SIZE = 10;
 const PANEL_TAB_OPTIONS = Object.freeze({
   ACTIVE_TASK: "active-task",
   WORKSPACE_SETTINGS: "workspace-settings",
+  HEARTBEAT: "heartbeat",
+  WORKSPACE: "workspace",
   TASK_LIST: "task-list",
   ARCHIVED_TASK_LIST: "archived-task-list",
   DEBUG: "debug",
@@ -334,11 +336,18 @@ function getDirectorySymlinkType() {
 
 function normalizePanelTab(value) {
   if (value === PANEL_TAB_OPTIONS.WORKSPACE_SETTINGS) {
-    return PANEL_TAB_OPTIONS.WORKSPACE_SETTINGS;
+    return PANEL_TAB_OPTIONS.TASK_LIST;
   }
-  return value === PANEL_TAB_OPTIONS.ACTIVE_TASK
-    ? PANEL_TAB_OPTIONS.ACTIVE_TASK
-    : PANEL_TAB_OPTIONS.WORKSPACE_SETTINGS;
+  if (value === PANEL_TAB_OPTIONS.TASK_LIST) {
+    return PANEL_TAB_OPTIONS.TASK_LIST;
+  }
+  if (value === PANEL_TAB_OPTIONS.HEARTBEAT) {
+    return PANEL_TAB_OPTIONS.HEARTBEAT;
+  }
+  if (value === PANEL_TAB_OPTIONS.WORKSPACE) {
+    return PANEL_TAB_OPTIONS.WORKSPACE;
+  }
+  return PANEL_TAB_OPTIONS.TASK_LIST;
 }
 
 function normalizePromptPath(value) {
@@ -3761,7 +3770,7 @@ class OpenAgentView extends ItemView {
     this.expandedToolMessages = new Set();
     this.visibleMessageCountByTask = new Map();
     this.visibleSettingsTaskCountByKey = new Map();
-    this.settingsTaskTab = "recent";
+    this.settingsTaskTab = "all";
     this.lastRenderedActiveTaskId = null;
     this.pendingInitialPanelScrollKey = "";
     this.lastRenderedTaskMessageStateByTask = new Map();
@@ -4248,7 +4257,7 @@ class OpenAgentView extends ItemView {
       return false;
     }
 
-    if (this.plugin.getPanelTab() !== PANEL_TAB_OPTIONS.ACTIVE_TASK) {
+    if (this.plugin.getPanelTab() !== PANEL_TAB_OPTIONS.TASK_LIST) {
       return false;
     }
 
@@ -4357,29 +4366,269 @@ class OpenAgentView extends ItemView {
   }
 
   getSettingsTaskTab() {
-    if (this.settingsTaskTab === "all") {
-      return "all";
-    }
-
     if (this.settingsTaskTab === "archived") {
       return "archived";
     }
 
-    return this.settingsTaskTab === "running" ? "running" : "recent";
+    if (this.settingsTaskTab === "running") {
+      return "running";
+    }
+
+    return this.settingsTaskTab === "recent" ? "recent" : "all";
   }
 
   setSettingsTaskTab(tab) {
-    const nextTab = tab === "all"
-      ? "all"
-      : (tab === "archived"
-        ? "archived"
-        : (tab === "running" ? "running" : "recent"));
+    const nextTab = tab === "archived"
+      ? "archived"
+      : (tab === "running"
+        ? "running"
+        : (tab === "recent" ? "recent" : "all"));
     if (this.settingsTaskTab === nextTab) {
       return;
     }
 
     this.settingsTaskTab = nextTab;
     this.render();
+  }
+
+  getSettingsTaskTabLabel(tab = this.getSettingsTaskTab()) {
+    if (tab === "archived") {
+      return "Archived threads";
+    }
+    if (tab === "running") {
+      return "Running threads";
+    }
+    if (tab === "recent") {
+      return "Recent threads";
+    }
+    return "All threads";
+  }
+
+  renderPanelTabs(parentEl, activePanelTab) {
+    const tabs = parentEl.createDiv({ cls: "oa-panel-tabs" });
+    [
+      { id: PANEL_TAB_OPTIONS.TASK_LIST, label: "Threads" },
+      { id: PANEL_TAB_OPTIONS.HEARTBEAT, label: "Heart beat" },
+      { id: PANEL_TAB_OPTIONS.WORKSPACE, label: "Workspace" },
+    ].forEach((tab) => {
+      const isActive = activePanelTab === tab.id;
+      const button = tabs.createEl("button", {
+        cls: `oa-panel-tab${isActive ? " is-active" : ""}`,
+        text: tab.label,
+        attr: {
+          type: "button",
+          "aria-pressed": isActive ? "true" : "false",
+        },
+      });
+      button.addEventListener("click", () => {
+        if (tab.id === PANEL_TAB_OPTIONS.TASK_LIST) {
+          void this.plugin.setTaskDetailOpen(false);
+          return;
+        }
+        void this.plugin.setPanelTab(tab.id);
+      });
+    });
+  }
+
+  renderThreadsPanel(parentEl, context = {}) {
+    const {
+      activeCanvasPath = "",
+      activeWorkspace = null,
+      activeTask = null,
+      archivedTasks = [],
+      runningTasks = [],
+      tasks = [],
+    } = context;
+    const threadsBlock = parentEl.createDiv({ cls: "oa-settings-section-block" });
+    const threadsHeader = threadsBlock.createDiv({ cls: "oa-settings-section-header oa-thread-filter-header" });
+    const settingsTaskTab = this.getSettingsTaskTab();
+    threadsHeader.createEl("h3", {
+      cls: "oa-settings-section-title",
+      text: activeCanvasPath ? this.getSettingsTaskTabLabel(settingsTaskTab) : "Tasks",
+    });
+    const filterShell = threadsHeader.createDiv({ cls: "oa-thread-filter-shell" });
+    const filterSelect = filterShell.createEl("select", {
+      cls: "oa-thread-filter-select",
+      attr: {
+        "aria-label": "Thread filter",
+      },
+    });
+    [
+      { id: "all", label: "All threads" },
+      { id: "recent", label: "Recent threads" },
+      { id: "running", label: "Running threads" },
+      { id: "archived", label: "Archived threads" },
+    ].forEach((tab) => {
+      filterSelect.createEl("option", {
+        text: tab.label,
+        value: tab.id,
+      });
+    });
+    filterSelect.value = settingsTaskTab;
+    filterSelect.addEventListener("change", () => this.setSettingsTaskTab(filterSelect.value));
+
+    const threadSection = threadsBlock.createDiv({ cls: "oa-task-section oa-settings-task-section" });
+    const allTasks = this.plugin.getTasks();
+    const displayedTasks = settingsTaskTab === "all"
+      ? allTasks
+      : (settingsTaskTab === "archived"
+        ? archivedTasks
+        : (settingsTaskTab === "running" ? runningTasks : tasks));
+    const taskListKey = [
+      "panel-threads",
+      settingsTaskTab,
+      settingsTaskTab === "all" ? "all" : (activeCanvasPath || ""),
+      settingsTaskTab === "all" ? "" : (activeWorkspace?.repoPath || ""),
+    ].join(":");
+    this.renderTaskList(threadSection, displayedTasks, {
+      emptyText: settingsTaskTab === "archived"
+        ? (activeCanvasPath
+          ? "No archived thread yet for this canvas."
+          : "No archived task yet.")
+        : (settingsTaskTab === "all"
+          ? "No OpenAgent threads yet."
+          : (settingsTaskTab === "running"
+            ? (activeCanvasPath
+              ? "No running thread for this canvas."
+              : "No running task right now.")
+            : (activeCanvasPath
+              ? "No thread yet for this canvas. Select a node and start one."
+              : "Open a Canvas and select a text node to work with its thread."))),
+      listKey: taskListKey,
+      activeTask,
+    });
+  }
+
+  renderHeartbeatPanel(parentEl) {
+    const block = parentEl.createDiv({ cls: "oa-settings-section-block" });
+    block.createEl("h3", {
+      cls: "oa-settings-section-title",
+      text: "Automations",
+    });
+    const section = block.createDiv({ cls: "oa-settings-section" });
+    const automationFiles = this.plugin.getAutomationFiles();
+    const list = section.createDiv({ cls: "oa-settings-list" });
+    if (automationFiles.length === 0) {
+      list.createDiv({
+        cls: "oa-muted",
+        text: "No automation files found.",
+      });
+    } else {
+      automationFiles.forEach((file) => {
+        const row = list.createDiv({ cls: "oa-settings-row" });
+        row.createDiv({ cls: "oa-settings-label", text: basenameVaultPath(file.path).replace(/\.md$/i, "") });
+        const value = row.createDiv({ cls: "oa-settings-value oa-settings-value-stack" });
+        value.createDiv({ cls: "oa-settings-value-path", text: file.path, attr: { title: file.path } });
+      });
+    }
+
+    const actions = section.createDiv({ cls: "oa-action-row oa-settings-actions" });
+    this.makeButton(actions, "Sync automations", () => {
+      void this.plugin.syncAutomationsWithFeedback();
+    }, false, { runOnMouseDown: true });
+    this.makeButton(actions, "Run daily review", () => {
+      void this.plugin.runAutomationWithFeedback("daily-vault-review");
+    }, false, { runOnMouseDown: true });
+  }
+
+  renderWorkspacePanel(parentEl, context = {}) {
+    const { activeWorkspace = null, workspaceSummariesLoading = false } = context;
+    const workspaceBlock = parentEl.createDiv({ cls: "oa-settings-section-block" });
+    workspaceBlock.createEl("h3", {
+      cls: "oa-settings-section-title",
+      text: "Workspace",
+    });
+    const workspaceSection = workspaceBlock.createDiv({
+      cls: "oa-settings-section oa-workspace-settings-section",
+    });
+    const workspaceSummary = workspaceSection.createDiv({ cls: "oa-settings-list" });
+    const repoPath = activeWorkspace?.repoPath || "";
+    const projectConfigPath = repoPath ? path.join(repoPath, REPO_WORKSPACE_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME) : "";
+    const agentsPath = repoPath ? path.join(repoPath, "AGENTS.md") : "";
+    [
+      {
+        label: "Current workspace",
+        value: repoPath || (workspaceSummariesLoading ? "Loading workspace..." : "No workspace selected"),
+        title: repoPath,
+      },
+      {
+        label: "Vault config",
+        value: activeWorkspace?.configPath || "Missing",
+        title: activeWorkspace?.configPath || "",
+      },
+      {
+        label: "Project config",
+        value: projectConfigPath
+          ? (fs.existsSync(projectConfigPath) ? `Found: ${projectConfigPath}` : `Missing: ${projectConfigPath}`)
+          : "No workspace selected",
+        title: projectConfigPath,
+      },
+      {
+        label: "AGENTS.md",
+        value: agentsPath
+          ? (fs.existsSync(agentsPath) ? agentsPath : `Missing: ${agentsPath}`)
+          : "No workspace selected",
+        title: agentsPath,
+      },
+    ].forEach((item) => {
+      const row = workspaceSummary.createDiv({ cls: "oa-settings-row" });
+      row.createDiv({ cls: "oa-settings-label", text: item.label });
+      row.createDiv({
+        cls: "oa-settings-value oa-settings-value-path",
+        text: item.value,
+        attr: item.title ? { title: item.title } : {},
+      });
+    });
+
+    const workspaceActions = workspaceSection.createDiv({ cls: "oa-action-row oa-settings-actions" });
+    const chooseWorkspaceButton = this.makeButton(workspaceActions, "New workspace", () => this.plugin.showWorkspacePicker());
+    chooseWorkspaceButton.setCta();
+    if (activeWorkspace?.configPath) {
+      this.makeButton(workspaceActions, "Open workspace.json", () => {
+        void this.plugin.app.workspace.openLinkText(activeWorkspace.configPath, "", false);
+      });
+    }
+    if (agentsPath && fs.existsSync(agentsPath)) {
+      this.makeButton(workspaceActions, "Open AGENTS.md", () => {
+        window.open(pathToFileURL(agentsPath).href);
+      });
+    }
+
+    const daemonBlock = parentEl.createDiv({ cls: "oa-settings-section-block" });
+    daemonBlock.createEl("h3", {
+      cls: "oa-settings-section-title",
+      text: "Codex server",
+    });
+    const daemonSection = daemonBlock.createDiv({ cls: "oa-settings-section oa-settings-summary" });
+    const daemonSummary = daemonSection.createDiv({ cls: "oa-settings-list" });
+    const daemonRow = daemonSummary.createDiv({ cls: "oa-settings-row" });
+    daemonRow.createDiv({ cls: "oa-settings-label", text: "Connection" });
+    const daemonValue = daemonRow.createDiv({ cls: "oa-settings-value oa-settings-value-stack" });
+    daemonValue.createDiv({
+      cls: `oa-status-tag ${this.plugin.getDaemonStatusTagClassName()}`.trim(),
+      text: this.plugin.getDaemonStatusLabel(),
+    });
+    daemonValue.createDiv({
+      cls: "oa-task-meta",
+      text: this.plugin.getDaemonStatusDetail() || "Checks whether the local Codex server is reachable.",
+    });
+
+    const daemonActions = daemonSection.createDiv({ cls: "oa-action-row oa-settings-actions" });
+    this.makeButton(daemonActions, "Refresh", () => {
+      void this.plugin.refreshDaemonStatus({
+        silent: false,
+        forceRefresh: true,
+      });
+    }, false, {
+      runOnMouseDown: true,
+    });
+    if (this.plugin.getDaemonStatus().state !== DAEMON_CONNECTION_STATES.ONLINE) {
+      this.makeButton(daemonActions, "Start server", () => {
+        void this.plugin.startDaemonWithFeedback();
+      }, false, {
+        runOnMouseDown: true,
+      });
+    }
   }
 
   renderTaskList(parentEl, tasks, options = {}) {
@@ -4458,12 +4707,21 @@ class OpenAgentView extends ItemView {
           },
         });
       } else {
-        itemHeader.createDiv({
+        const detailButton = itemHeader.createEl("button", {
           cls: "oa-thread-list-arrow",
           text: "→",
           attr: {
-            "aria-hidden": "true",
+            type: "button",
+            "aria-label": "Show detail",
+            title: "Show detail",
           },
+        });
+        detailButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void this.plugin.activateTaskFromList(task.taskId, {
+            showDetail: true,
+          });
         });
       }
 
@@ -4581,8 +4839,9 @@ class OpenAgentView extends ItemView {
     });
     this.lastRenderedActiveTaskId = activeTaskId || null;
     const panelTab = this.plugin.getPanelTab();
-    const isSettingsScreen = panelTab !== PANEL_TAB_OPTIONS.ACTIVE_TASK;
-    const contentEl = rootEl.createDiv({ cls: `oa-panel-scroll${isSettingsScreen ? " is-settings-screen" : ""}` });
+    const taskDetailOpen = panelTab === PANEL_TAB_OPTIONS.TASK_LIST && this.plugin.isTaskDetailOpen();
+    const isUtilityTab = panelTab !== PANEL_TAB_OPTIONS.TASK_LIST;
+    const contentEl = rootEl.createDiv({ cls: `oa-panel-scroll${isUtilityTab ? " is-settings-screen" : ""}` });
     this.panelScrollEl = contentEl;
     this.cwdInput = null;
     this.composerInput = null;
@@ -4590,10 +4849,10 @@ class OpenAgentView extends ItemView {
     const panelScrollKey = [
       panelTab,
       activeCanvasPath || "",
-      panelTab === PANEL_TAB_OPTIONS.ACTIVE_TASK ? (activeTask?.taskId || "") : "",
+      panelTab === PANEL_TAB_OPTIONS.TASK_LIST ? (activeTask?.taskId || "") : "",
     ].join(":");
     this.panelScrollKey = panelScrollKey;
-    if (panelTab === PANEL_TAB_OPTIONS.ACTIVE_TASK && activeTaskId && didSwitchActiveTask) {
+    if (panelTab === PANEL_TAB_OPTIONS.TASK_LIST && activeTaskId && didSwitchActiveTask) {
       this.queueInitialPanelScroll(panelScrollKey);
     }
 
@@ -4615,7 +4874,7 @@ class OpenAgentView extends ItemView {
     }
     const brandText = brand.createDiv({ cls: "oa-brand-text" });
     const brandTitleRow = brandText.createDiv({ cls: "oa-brand-title-row" });
-    brandTitleRow.createEl("h2", { text: isSettingsScreen ? "Threads" : "OpenAgent" });
+    brandTitleRow.createEl("h2", { text: "OpenAgent" });
     if (this.plugin.getDaemonStatus().state === DAEMON_CONNECTION_STATES.ONLINE) {
       brandTitleRow.createSpan({
         cls: "oa-daemon-online-dot",
@@ -4627,23 +4886,22 @@ class OpenAgentView extends ItemView {
     }
     brandText.createDiv({
       cls: "oa-brand-subtitle",
-      text: isSettingsScreen
-        ? (activeWorkspace?.name || (workspaceSummariesLoading ? "Loading workspace..." : "Workspace and conversation controls"))
-        : (activeTask?.cwd ? compactPathLabel(activeTask.cwd) : (activeWorkspace?.name || "Canvas-linked conversations")),
+      text: activeTask?.cwd
+        ? compactPathLabel(activeTask.cwd)
+        : (activeWorkspace?.name || (workspaceSummariesLoading ? "Loading workspace..." : "Canvas-linked conversations")),
     });
     const actions = headerTop.createDiv({ cls: "oa-action-row oa-header-actions" });
     this.makeButton(actions, "Refresh", () => {
       void this.plugin.refreshTasks();
-    });
-    if (isSettingsScreen) {
-      this.makeButton(actions, "Done", () => this.plugin.setPanelTab(PANEL_TAB_OPTIONS.ACTIVE_TASK));
-    } else {
-      if (activeCanvasPath) {
-        this.makeButton(actions, "Arrange", () => this.plugin.autoArrangeActiveCanvas());
-      }
-      this.makeButton(actions, "Threads", () => this.plugin.setPanelTab(PANEL_TAB_OPTIONS.WORKSPACE_SETTINGS));
+    }, false, { icon: "refresh-cw", iconOnly: true, tooltip: "Refresh threads" });
+    if (activeCanvasPath) {
+      this.makeButton(actions, "Arrange", () => this.plugin.autoArrangeActiveCanvas(), false, {
+        icon: "layout-dashboard",
+        iconOnly: true,
+        tooltip: "Arrange canvas",
+      });
     }
-    if (!isSettingsScreen && activeTask) {
+    if (taskDetailOpen && activeTask) {
       const headerConversation = header.createDiv({ cls: "oa-conversation-heading" });
       headerConversation.createDiv({ cls: "oa-detail-title", text: activeTask.title || "Untitled task" });
       this.activeTaskStatusEl = headerConversation.createDiv({
@@ -4658,156 +4916,39 @@ class OpenAgentView extends ItemView {
       });
     }
 
-    if (isSettingsScreen) {
-      const settingsBody = contentEl.createDiv({ cls: "oa-settings-body" });
-      const settingsContent = settingsBody.createDiv({ cls: "oa-settings-page-content" });
-      const workspaceBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
-      workspaceBlock.createEl("h3", {
-        cls: "oa-settings-section-title",
-        text: "Workspace",
+    const panelBody = contentEl.createDiv({ cls: "oa-settings-body" });
+    const panelContent = panelBody.createDiv({ cls: "oa-settings-page-content" });
+    this.renderPanelTabs(panelContent, panelTab);
+    if (panelTab === PANEL_TAB_OPTIONS.HEARTBEAT) {
+      this.renderHeartbeatPanel(panelContent);
+      this.restoreComposerFocusState(composerFocusState);
+      this.restorePanelScrollState(panelScrollState, panelScrollKey);
+      return;
+    }
+    if (panelTab === PANEL_TAB_OPTIONS.WORKSPACE) {
+      this.renderWorkspacePanel(panelContent, {
+        activeWorkspace,
+        workspaceSummariesLoading,
       });
-      const workspaceSection = workspaceBlock.createDiv({
-        cls: "oa-settings-section oa-workspace-settings-section",
-      });
-      const workspaceSummary = workspaceSection.createDiv({ cls: "oa-settings-list" });
-      const workspaceRow = workspaceSummary.createDiv({ cls: "oa-settings-row" });
-      workspaceRow.createDiv({ cls: "oa-settings-label", text: "Current workspace" });
-      workspaceRow.createDiv({
-        cls: "oa-settings-value oa-settings-value-path",
-        text: activeWorkspace?.repoPath || (workspaceSummariesLoading ? "Loading workspace..." : "No workspace selected"),
-        attr: activeWorkspace?.repoPath ? { title: activeWorkspace.repoPath } : {},
-      });
-
-      const workspaceActions = workspaceSection.createDiv({ cls: "oa-action-row oa-settings-actions" });
-      const chooseWorkspaceButton = this.makeButton(workspaceActions, "New workspace", () => this.plugin.showWorkspacePicker());
-      chooseWorkspaceButton.setCta();
-
-      const daemonBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
-      daemonBlock.createEl("h3", {
-        cls: "oa-settings-section-title",
-        text: "Codex server",
-      });
-      const daemonSection = daemonBlock.createDiv({ cls: "oa-settings-section oa-settings-summary" });
-      const daemonSummary = daemonSection.createDiv({ cls: "oa-settings-list" });
-      const daemonRow = daemonSummary.createDiv({ cls: "oa-settings-row" });
-      daemonRow.createDiv({ cls: "oa-settings-label", text: "Connection" });
-      const daemonValue = daemonRow.createDiv({ cls: "oa-settings-value oa-settings-value-stack" });
-      daemonValue.createDiv({
-        cls: `oa-status-tag ${this.plugin.getDaemonStatusTagClassName()}`.trim(),
-        text: this.plugin.getDaemonStatusLabel(),
-      });
-      daemonValue.createDiv({
-        cls: "oa-task-meta",
-        text: this.plugin.getDaemonStatusDetail() || "Checks whether the local Codex server is reachable.",
-      });
-
-      const daemonActions = daemonSection.createDiv({ cls: "oa-action-row oa-settings-actions" });
-      this.makeButton(daemonActions, "Refresh", () => {
-        void this.plugin.refreshDaemonStatus({
-          silent: false,
-          forceRefresh: true,
-        });
-      }, false, {
-        runOnMouseDown: true,
-      });
-      if (this.plugin.getDaemonStatus().state !== DAEMON_CONNECTION_STATES.ONLINE) {
-        this.makeButton(daemonActions, "Start server", () => {
-          void this.plugin.startDaemonWithFeedback();
-        }, false, {
-          runOnMouseDown: true,
-        });
-      }
-
-      const threadsBlock = settingsContent.createDiv({ cls: "oa-settings-section-block" });
-      const threadsHeader = threadsBlock.createDiv({ cls: "oa-settings-section-header" });
-      threadsHeader.createEl("h3", {
-        cls: "oa-settings-section-title",
-        text: activeCanvasPath ? "Threads" : "Tasks",
-      });
-      const threadTabs = threadsHeader.createDiv({ cls: "oa-settings-inline-tabs" });
-      const settingsTaskTab = this.getSettingsTaskTab();
-      [
-        { id: "recent", label: "Recent" },
-        { id: "all", label: "All" },
-        { id: "running", label: "Running" },
-        { id: "archived", label: "Archived" },
-      ].forEach((tab) => {
-        const button = threadTabs.createEl("button", {
-          cls: `oa-settings-inline-tab${settingsTaskTab === tab.id ? " is-active" : ""}`,
-          text: tab.label,
-          attr: {
-            type: "button",
-            "aria-pressed": settingsTaskTab === tab.id ? "true" : "false",
-          },
-        });
-        button.addEventListener("click", () => this.setSettingsTaskTab(tab.id));
-      });
-
-      const threadSection = threadsBlock.createDiv({ cls: "oa-task-section oa-settings-task-section" });
-      const allTasks = this.plugin.getTasks();
-      const displayedTasks = settingsTaskTab === "all"
-        ? allTasks
-        : (settingsTaskTab === "archived"
-          ? archivedTasks
-          : (settingsTaskTab === "running" ? runningTasks : tasks));
-      const taskListKey = [
-        "workspace-settings",
-        settingsTaskTab,
-        settingsTaskTab === "all" ? "all" : (activeCanvasPath || ""),
-        settingsTaskTab === "all" ? "" : (activeWorkspace?.repoPath || ""),
-      ].join(":");
-      this.renderTaskList(threadSection, displayedTasks, {
-        emptyText: settingsTaskTab === "archived"
-          ? (activeCanvasPath
-            ? "No archived thread yet for this canvas."
-            : "No archived task yet.")
-          : (settingsTaskTab === "all"
-            ? "No OpenAgent threads yet."
-            : (settingsTaskTab === "running"
-              ? (activeCanvasPath
-                ? "No running thread for this canvas."
-                : "No running task right now.")
-              : (activeCanvasPath
-                ? "No thread yet for this canvas. Select a node and start one."
-                : "Open a Canvas and select a text node to work with its thread."))),
-        listKey: taskListKey,
+      this.restoreComposerFocusState(composerFocusState);
+      this.restorePanelScrollState(panelScrollState, panelScrollKey);
+      return;
+    }
+    if (!taskDetailOpen || !activeTask) {
+      this.renderThreadsPanel(panelContent, {
+        activeCanvasPath,
+        activeWorkspace,
         activeTask,
+        archivedTasks,
+        runningTasks,
+        tasks,
       });
-
       this.restoreComposerFocusState(composerFocusState);
       this.restorePanelScrollState(panelScrollState, panelScrollKey);
       return;
     }
 
-    const detail = contentEl.createDiv({ cls: "oa-detail-section" });
-
-    if (!activeTask) {
-      detail.addClass("is-empty-state");
-      if (selectedGroupContextPreview) {
-        this.renderGroupContextPreview(detail, selectedGroupContextPreview);
-      }
-      const emptyStateTasks = tasks.length > 0 ? tasks : archivedTasks;
-      if (emptyStateTasks.length > 0) {
-        const emptyStateTaskGroup = emptyStateTasks === archivedTasks ? "archived" : "recent";
-        this.renderTaskList(detail, emptyStateTasks, {
-          title: emptyStateTaskGroup === "archived"
-            ? (activeCanvasPath ? "Archived threads" : "Archived tasks")
-            : (activeCanvasPath ? "" : "Recent threads"),
-          emptyText: activeCanvasPath
-            ? "No thread yet for this canvas. Select a node and start one."
-            : "Open a Canvas and select a node to start a conversation.",
-          listKey: [
-            "active-task-empty-state",
-            emptyStateTaskGroup,
-            activeCanvasPath || "",
-            activeWorkspace?.repoPath || "",
-          ].join(":"),
-          activeTask,
-        });
-      }
-      this.restorePanelScrollState(panelScrollState, panelScrollKey);
-      return;
-    }
+    const detail = panelContent.createDiv({ cls: "oa-detail-section" });
 
     if (selectedGroupContextPreview) {
       this.renderGroupContextPreview(detail, selectedGroupContextPreview);
@@ -4893,8 +5034,17 @@ class OpenAgentView extends ItemView {
 
   makeButton(container, label, onClick, disabled = false, options = {}) {
     const button = new ButtonComponent(container);
-    button.setButtonText(label);
+    button.setButtonText(options.iconOnly ? "" : label);
     button.setDisabled(Boolean(disabled));
+    if (options.icon && button.buttonEl) {
+      setIcon(button.buttonEl, options.icon);
+      button.buttonEl.addClass("oa-icon-button");
+      if (options.iconOnly) {
+        button.buttonEl.addClass("is-icon-only");
+      }
+      button.buttonEl.setAttribute("aria-label", String(options.tooltip || label || "Action"));
+      setTooltip(button.buttonEl, String(options.tooltip || label || "Action"));
+    }
     if (options.runOnMouseDown && button.buttonEl) {
       let ignoreNextClick = false;
       button.buttonEl.addEventListener("mousedown", (event) => {
@@ -5800,6 +5950,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     this.uiState = {
       activeTaskId: savedState.uiState?.activeTaskId ?? savedState.activeTaskId ?? null,
       panelTab: normalizePanelTab(savedState.uiState?.panelTab ?? savedState.panelTab),
+      taskDetailOpen: savedState.uiState?.taskDetailOpen === true,
       draftsByTaskId: savedState.uiState?.draftsByTaskId ?? savedState.draftsByTaskId ?? {},
       canvasNodeHighlightStateByKey: savedState.uiState?.canvasNodeHighlightStateByKey ?? {},
       unreadTaskStateById: normalizeUnreadTaskState(
@@ -9029,9 +9180,33 @@ module.exports = class OpenAgentPlugin extends Plugin {
     return normalizePanelTab(this.uiState?.panelTab);
   }
 
+  isTaskDetailOpen() {
+    return this.uiState?.taskDetailOpen === true;
+  }
+
+  async setTaskDetailOpen(isOpen) {
+    const nextValue = isOpen === true;
+    this.uiState.panelTab = PANEL_TAB_OPTIONS.TASK_LIST;
+    if (this.uiState.taskDetailOpen === nextValue) {
+      this.requestViewRefresh();
+      return;
+    }
+
+    this.uiState.taskDetailOpen = nextValue;
+    await this.persistPluginState();
+    this.requestViewRefresh();
+  }
+
   async setPanelTab(panelTab) {
     const nextPanelTab = normalizePanelTab(panelTab);
+    const previousTaskDetailOpen = this.uiState.taskDetailOpen;
+    if (nextPanelTab !== PANEL_TAB_OPTIONS.TASK_LIST) {
+      this.uiState.taskDetailOpen = false;
+    }
     if (this.uiState.panelTab === nextPanelTab) {
+      if (previousTaskDetailOpen !== this.uiState.taskDetailOpen) {
+        await this.persistPluginState();
+      }
       this.requestViewRefresh();
       return;
     }
@@ -10245,6 +10420,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
 
     await this.setActiveTask(normalizedTaskId, {
       revealInActiveTab: options.revealInActiveTab !== false,
+      showDetail: options.showDetail === true,
     });
     if (options.revealInCanvas === false) {
       return true;
@@ -10730,8 +10906,9 @@ module.exports = class OpenAgentPlugin extends Plugin {
       this.updateTaskUnreadState(normalizedTaskId, false);
     }
     if (options.revealInActiveTab) {
-      this.uiState.panelTab = PANEL_TAB_OPTIONS.ACTIVE_TASK;
+      this.uiState.panelTab = PANEL_TAB_OPTIONS.TASK_LIST;
     }
+    this.uiState.taskDetailOpen = options.showDetail === true;
     await this.persistPluginState();
     this.subscribeToTask(normalizedTaskId);
     this.requestViewRefresh();
@@ -11768,6 +11945,7 @@ module.exports = class OpenAgentPlugin extends Plugin {
     }
 
     this.uiState.activeTaskId = nextTaskId;
+    this.uiState.taskDetailOpen = false;
     if (shouldMarkRead) {
       this.updateTaskUnreadState(nextTaskId, false);
     }
