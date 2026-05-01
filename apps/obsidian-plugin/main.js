@@ -4404,6 +4404,34 @@ class OpenAgentView extends ItemView {
     return "All threads";
   }
 
+  bindImmediateMouseAction(element, callback) {
+    if (!element || typeof callback !== "function") {
+      return;
+    }
+
+    let ignoreNextClick = false;
+    element.addEventListener("mousedown", (event) => {
+      if (event.button !== 0 || element.disabled) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      ignoreNextClick = true;
+      callback(event);
+    });
+    element.addEventListener("click", (event) => {
+      if (ignoreNextClick) {
+        event.preventDefault();
+        event.stopPropagation();
+        ignoreNextClick = false;
+        return;
+      }
+
+      callback(event);
+    });
+  }
+
   renderPanelTabs(parentEl, activePanelTab) {
     const tabs = parentEl.createDiv({ cls: "oa-panel-tabs" });
     [
@@ -4420,7 +4448,7 @@ class OpenAgentView extends ItemView {
           "aria-pressed": isActive ? "true" : "false",
         },
       });
-      button.addEventListener("click", () => {
+      this.bindImmediateMouseAction(button, () => {
         if (tab.id === PANEL_TAB_OPTIONS.TASK_LIST) {
           void this.plugin.setTaskDetailOpen(false);
           return;
@@ -4465,6 +4493,10 @@ class OpenAgentView extends ItemView {
       });
     });
     filterSelect.value = settingsTaskTab;
+    filterSelect.addEventListener("mousedown", (event) => {
+      event.stopPropagation();
+      filterSelect.focus();
+    });
     filterSelect.addEventListener("change", () => this.setSettingsTaskTab(filterSelect.value));
 
     const threadSection = threadsBlock.createDiv({ cls: "oa-task-section oa-settings-task-section" });
@@ -4720,16 +4752,14 @@ class OpenAgentView extends ItemView {
             title: "Show detail",
           },
         });
-        detailButton.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
+        this.bindImmediateMouseAction(detailButton, () => {
           void this.plugin.activateTaskFromList(task.taskId, {
             showDetail: true,
           });
         });
       }
 
-      item.addEventListener("click", () => {
+      this.bindImmediateMouseAction(item, () => {
         void onTaskClick(task);
       });
     });
